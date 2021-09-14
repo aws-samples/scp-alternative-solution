@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Sid": "AllowAll",
+          "Effect": "Allow",
+          "Action": "*",
+          "Resource": "*"
+      },
+      {
+          "Sid": "DenyCreateS3Bucket",
+          "Effect": "Deny",
+          "Action": [
+             "s3:*"
+          ],
+          "Resource": "*",
+          "Condition": {
+              "ArnNotLike": {
+                  "aws:PrincipalARN": "arn:aws-cn:iam::*:role/OrganizationAccountAccessRole"
+              }
+          }
+      }
+  ]
+}

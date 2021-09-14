@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Sid": "AllowAll",
+          "Effect": "Allow",
+          "Action": "*",
+          "Resource": "*"
+      },
+      {
+          "Sid": "DenyAllOutsideBeijing",
+          "Effect": "Deny",
+          "NotAction": [
+             "iam:*",
+             "organizations:*",
+             "route53:*",
+             "budgets:*",
+             "waf:*",
+             "cloudfront:*",
+             "globalaccelerator:*",
+             "importexport:*",
+             "support:*"
+          ],
+          "Resource": "*",
+          "Condition": {
+              "StringNotEquals": {
+                  "aws:RequestedRegion": [
+                      "cn-north-1"
+                  ]
+              }
+          }
+      }
+  ]
+}

@@ -1,0 +1,41 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Create required cross-account IAM role for SCP alternative solution in Management account.
+Parameters:
+  SecurityAccountID:
+    Type: String
+    Description: Enter the Security Account ID
+    AllowedPattern: "^[0-9]{12}$"
+  ManagementAccountAccessRoleName:
+    Type: String
+    Default: scp-cross-account-access-role-for-lambda
+    Description: Enter IAM role name for cross-account access for Lambda in Security Account.
+  OrganizationAccessRoleName:
+    Type: String
+    Description: Enter the AWS Organization Access Role Name used to assume to member accounts.
+    Default: OrganizationAccountAccessRole
+Resources:
+  SCPAccountRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: !Ref ManagementAccountAccessRoleName
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+              Effect: "Allow"
+              Principal:
+                AWS:
+                  - !Ref SecurityAccountID
+              Action:
+                - sts:AssumeRole
+        Path: "/"
+        Policies:
+        - PolicyDocument:
+            Statement:
+            - Action:
+              - sts:AssumeRole
+              Effect: Allow
+              Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${OrganizationAccessRoleName}'
+            Version: '2012-10-17'
+          PolicyName: !Sub '${ManagementAccountAccessRoleName}-policy'

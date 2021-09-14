@@ -1,0 +1,801 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create required infrastructure for SCP alternative solution in Security Account.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Global Variables
+        Parameters:
+          - Prefix
+      - Label:
+          default: Mandatory Variables
+        Parameters:
+          - SCPCatalogAdministrator
+          - OrganizationAccessRoleName
+          - ManagementAccountAccessRoleName
+          - ManagementAccountID
+      - Label:
+          default: Optional Variables
+        Parameters:
+          - Email
+          - SCPPortfolioName
+          - SourceTemplate
+          - SCPPortfolioName
+          - SCPProductName
+          - SCPProductDescription
+Conditions:
+  DisableEmailSub: !Equals  [!Ref Email,'']
+Parameters:
+  Prefix:
+    Type: String
+    Description: Enter the prefix for the instructure created in this stack.
+    Default: scp-alt
+  Email:
+    Type: String
+    Description: Enter the Email Address to subscribe the failures for the lambda execution.
+  OrganizationAccessRoleName:
+    Type: String
+    Description: >
+      Enter the AWS Organization Access Role Name used to assume to member accounts.
+      The role name needs to be matched with the value in 010 cloudformation template.
+    Default: OrganizationAccountAccessRole
+  ManagementAccountAccessRoleName:
+    Type: String
+    Default: scp-cross-account-access-role-for-lambda
+    Description: >
+      Enter IAM role name for cross-account access for Lambda in Security Account.
+      The role name needs to be matched with the value in 010 cloudformation template.
+  ManagementAccountID:
+    Type: String
+    Description: The management Account ID of the organization.
+    AllowedPattern: "^[0-9]{12}$"
+  SourceTemplate:
+    Type: String
+    Description: >
+      Enter the CloudFormation template path stored in S3 bucket in Security Account.
+      The template is used for the SCP Service Catalog.
+    Type: String
+    Default: scp-service-catalog-product-template.yaml
+  SCPCatalogAdministrator:
+    Type: String
+    Description: >
+      Enter the ARN Suffix of the IAM entity (role or user or group) that will be
+      performing SCP account register from AWS Service Catalog
+      E.g: role/Admin, user/abc
+    Type: String
+    Default: role/Admin
+    AllowedPattern: ".+"
+  SCPPortfolioName:
+    Type: String
+    Description: "Enter the name for SCP Acount Register Portfolio."
+    Type: String
+    Default: "SCP Account Register Portfolio."
+  SCPProductName:
+    Type: String
+    Description: "Enter the name for SCP Account Register Product."
+    Default: "SCP Account Register Product."
+  SCPProductDescription:
+    Description: "Enter the description for SCP Account Register Product."
+    Type: String
+    Default: "This product to register new account to apply SCP Policy in the SCP Alternative Solution."
+
+Resources:
+  # system metadata to parameter store
+  SSMManagementAccountID:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/management-account-id
+      Type: String
+      Value: !Ref ManagementAccountID
+      Description: The Management Account ID of the organization.
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  S3BucketName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/cloudformation-s3-bucket-name
+      Type: String
+      Value: !ImportValue CloudFormationBucketName
+      Description: The S3 bucket name for CloudFormation templates
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPPermissionBoundaryName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/permission-boundary-name
+      Type: String
+      Value: scp-enforce-policy
+      Description: The SCP permission boundary policy name
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPOrganizationAccessRole:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/organization-access-role-name
+      Type: String
+      Value: !Ref OrganizationAccessRoleName
+      Description: The AWS Organization Access Role name
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPReadPolicyStatementID:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/read-policy-statement-id
+      Type: String
+      Value: AllowReadFromMemberAccounts
+      Description: The statement ID in event bus resource policy
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  DynamodbArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/dynamodb-arn
+      Type: String
+      Value: !GetAtt ScpTable.Arn
+      Description: The Dynamodb Table Arn for SCP in security account
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SNSTopicArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/sns-topic-arn
+      Type: String
+      Value: !Ref SNSTopic
+      Description: The SNS Topic for SCP in security account
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPEventBusArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/event-bus-arn
+      Type: String
+      Value: !GetAtt SCPIamEventDispatcherEventBridge.Arn
+      Description: The Event Bridge for SCP in security account
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPEventRuleArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/event-rule-arn
+      Type: String
+      Value: !GetAtt SCPIamEventDispatcherEventBridgeSQSRule.Arn
+      Description: The Event rule for SCP in security account
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+
+  SCPManagementAccountAccessRoleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/management-account-access-role
+      Type: String
+      Value: !Ref ManagementAccountAccessRoleName
+      Description: The Management Account Access role for Security Account.
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+
+  SCPS3PermissionBoundary:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/permission-boundary-s3-bucket-name
+      Type: String
+      Value: !Ref ScpS3Bucket
+      Description: The SCP bucket for permission boundary
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  SCPS3ObjectFolder:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/s3-object-folder
+      Type: String
+      Value: permission-boundary-policy
+      Description: The S3 Object Folder
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+
+  SqsKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          - Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+                - events.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+  SnsKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+
+  # s3 -> sqs -> lambda
+  ScpS3Bucket:
+    DependsOn: SCPS3EventDispatcherSQSQueuePolicy
+    DeletionPolicy: Retain
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub '${Prefix}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: yes
+        BlockPublicPolicy: yes
+        IgnorePublicAcls: yes
+        RestrictPublicBuckets: yes
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            Queue: !GetAtt SCPS3EventDispatcherSQS.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Value: !Sub
+                      - "${BucketFolder}/"
+                      - BucketFolder: !GetAtt SCPS3ObjectFolder.Value
+                    Name: prefix
+                  - Value: .json
+                    Name: suffix
+  ScpS3BucketPOL:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ScpS3Bucket
+      PolicyDocument:
+        Id: CrossAccessPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowReadFromUseCasesAccounts
+            Action:
+              - "s3:Get*"
+              - "s3:List*"
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*'
+            Principal:
+              AWS:
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+  SCPS3EventDispatcherSQS:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: !Sub '${Prefix}-policy-create'
+      # Must be greater than the lambda execution timeout
+      VisibilityTimeout: 900
+      MessageRetentionPeriod: 7200
+      # https://docs.aws.amazon.com/lambda/latest/operatorguide/sqs-retries.html
+      RedrivePolicy:
+        deadLetterTargetArn: !Sub ${SCPS3EventDispatcherDLQueue.Arn}
+        maxReceiveCount: 1
+      KmsMasterKeyId: !Ref SqsKmsKey
+  SCPS3EventDispatcherDLQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Prefix}-policy-create-DLQ'
+      KmsMasterKeyId: !Ref SqsKmsKey
+  SCPS3EventDispatcherSQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "s3.amazonaws.com"
+            Action:
+              - SQS:SendMessage
+            Resource: !GetAtt SCPS3EventDispatcherSQS.Arn
+            Condition:
+              ArnLike:
+                # Static BucketName used to avoid circular dependency with S3 bucket
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:s3:::${Prefix}-${AWS::AccountId}'
+      Queues:
+        - !Ref SCPS3EventDispatcherSQS
+  ScpS3LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+        Version: '2012-10-17'
+      Path: "/"
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
+          Version: '2012-10-17'
+        PolicyName: !Sub '${AWS::StackName}-${AWS::Region}-AWSLambda-CW'
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - s3:PutObject
+            - s3:List*
+            Effect: Allow
+            Resource:
+            - !Sub arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*
+            - !Sub arn:${AWS::Partition}:s3:::${ScpS3Bucket}
+          Version: '2012-10-17'
+        PolicyName: !Sub ${AWS::StackName}-${AWS::Region}-AWSLambda-S3
+      RoleName: !Sub ${AWS::StackName}-${AWS::Region}-AWSLambdaExecutionRole
+  # Lambda scp-s3-event-dispatcher
+  SCPS3EventDispatcherLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
+        - PolicyName: allowSqs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - sqs:ReceiveMessage
+              - sqs:GetQueueAttributes
+              - sqs:DeleteMessage
+              Resource: !GetAtt SCPS3EventDispatcherSQS.Arn
+        - PolicyName: allowDynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              Resource: !GetAtt ScpTable.Arn
+        - PolicyName: allowS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}'
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*'
+        - PolicyName: allowExternalS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}/*'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+        - PolicyName: allowSns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref SNSTopic
+        - PolicyName: allowAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: !Sub 'arn:${AWS::Partition}:iam::${ManagementAccountID}:role/${ManagementAccountAccessRoleName}'
+        - PolicyName: allowDecryptKMS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Decrypt"
+                - "kms:Encrypt"
+                - "kms:GenerateDataKey"
+              Resource: "*"
+  SCPS3EventDispatcherLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: "scp-s3-event-dispatcher.main"
+      Runtime: "python3.7"
+      Role: !GetAtt SCPS3EventDispatcherLambdaExecutionRole.Arn
+      Timeout: 900
+      TracingConfig:
+          Mode: "Active"
+      Code:
+        S3Bucket: !ImportValue CloudFormationBucketName
+        S3Key: "scp-s3-event-dispatcher.zip"
+      Environment:
+        Variables:
+          "DYNAMODB_TABLE_ARN": !GetAtt ScpTable.Arn
+          "SNS_TOPIC_ARN": !Ref SNSTopic
+          "ORGANIZATION_ROLE": !Ref OrganizationAccessRoleName
+          "PERMISSION_BOUNDARY_NAME": !GetAtt SCPPermissionBoundaryName.Value
+          "MANAGEMENT_ACCOUNT_ID": !Ref ManagementAccountID
+          "MANAGEMENT_ACCOUNT_ACCESS_ROLE": !Ref ManagementAccountAccessRoleName
+  SCPS3EventDispatcherLambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt SCPS3EventDispatcherSQS.Arn
+      FunctionName: !GetAtt SCPS3EventDispatcherLambda.Arn
+  # Event Bus -> Event rule -> SQS -> Lambda
+  SCPIamEventDispatcherEventBridge:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub '${Prefix}-event-bus'
+  SCPIamEventDispatcherEventBridgeSQSRule:
+    Type: AWS::Events::Rule
+    Properties:
+       Description: "Capture IAM events from other accounts for SCP"
+       Name: !Sub '${Prefix}-event-rule'
+       EventBusName: !Ref SCPIamEventDispatcherEventBridge
+       EventPattern:
+         source:
+           - aws.iam
+         detail-type:
+           - AWS API Call via CloudTrail
+       State: ENABLED
+       Targets:
+         - Arn: !GetAtt SCPIamEventDispatcherSQS.Arn
+           Id: "SCPIamEventDispatcherSQSQueue"
+  # Lambda scp-iam-event-dispatcher
+  SCPIamEventDispatcherLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
+        - PolicyName: allowSqs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - sqs:ReceiveMessage
+              - sqs:GetQueueAttributes
+              - sqs:DeleteMessage
+              Resource: !GetAtt SCPIamEventDispatcherSQS.Arn
+        - PolicyName: allowDynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              Resource: !GetAtt ScpTable.Arn
+        - PolicyName: allowS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}'
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*'
+        - PolicyName: allowExternalS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}/*'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+        - PolicyName: allowSns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref SNSTopic
+        - PolicyName: allowAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: !Sub 'arn:${AWS::Partition}:iam::${ManagementAccountID}:role/${ManagementAccountAccessRoleName}'
+        - PolicyName: allowDecryptKMS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Decrypt"
+                - "kms:Encrypt"
+                - "kms:GenerateDataKey"
+              Resource: "*"
+
+  SCPIamEventDispatcherLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: "scp-iam-event-dispatcher.main"
+      Runtime: "python3.7"
+      Role: !GetAtt SCPIamEventDispatcherLambdaExecutionRole.Arn
+      Timeout: 600
+      TracingConfig:
+          Mode: "Active"
+      Code:
+        S3Bucket: !ImportValue CloudFormationBucketName
+        S3Key: "scp-iam-event-dispatcher.zip"
+      Environment:
+        Variables:
+          "DYNAMODB_TABLE_ARN": !GetAtt ScpTable.Arn
+          "SNS_TOPIC_ARN": !Ref SNSTopic
+          "S3_BUCKET_NAME": !Ref ScpS3Bucket
+          "ORGANIZATION_ROLE": !Ref OrganizationAccessRoleName
+          "S3_OBJECT_FOLDER": !GetAtt SCPS3ObjectFolder.Value
+          "PERMISSION_BOUNDARY_NAME": !GetAtt SCPPermissionBoundaryName.Value
+          "MANAGEMENT_ACCOUNT_ID": !Ref ManagementAccountID
+          "MANAGEMENT_ACCOUNT_ACCESS_ROLE": !Ref ManagementAccountAccessRoleName
+  SCPIamEventDispatcherLambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt SCPIamEventDispatcherSQS.Arn
+      FunctionName: !GetAtt SCPIamEventDispatcherLambda.Arn
+  SCPIamEventDispatcherSQS:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: !Sub '${Prefix}-policy-binding'
+      # Must be greater than the lambda execution timeout
+      VisibilityTimeout: 600
+      MessageRetentionPeriod: 7200
+      # https://docs.aws.amazon.com/lambda/latest/operatorguide/sqs-retries.html
+      RedrivePolicy:
+        deadLetterTargetArn: !Sub ${SCPIamEventDispatcherDLQueue.Arn}
+        maxReceiveCount: 1
+      KmsMasterKeyId: !Ref SqsKmsKey
+  SCPIamEventDispatcherDLQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Prefix}-policy-binding-DLQ'
+      MessageRetentionPeriod: 43200
+      KmsMasterKeyId: !Ref SqsKmsKey
+  SCPIamEventDispatcherSQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'events.amazonaws.com'
+            Action:
+              - "SQS:SendMessage"
+              - "SQS:ReceiveMessage"
+              - "SQS:GetQueueAttributes"
+            Resource: !GetAtt SCPIamEventDispatcherSQS.Arn
+            Condition:
+              ArnEquals:
+                # Static BucketName used to avoid circular dependency with S3 bucket
+                aws:SourceArn: !GetAtt SCPIamEventDispatcherEventBridgeSQSRule.Arn
+      Queues:
+        - !Ref SCPIamEventDispatcherSQS
+
+  # DynamoDB table
+  ScpTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: AccountId
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: AccountId
+          AttributeType: S
+      TableName: !Sub '${Prefix}-dynamodb'
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+  # SNS topic
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${Prefix}-sns'
+      KmsMasterKeyId: !Ref SnsKmsKey
+      Subscription:
+        !If
+          - DisableEmailSub
+          - []
+          - - Endpoint:
+                Ref: Email
+              Protocol: email
+
+  # SCP Service Catalog
+  SCPPortfolio:
+    Type: "AWS::ServiceCatalog::Portfolio"
+    Properties:
+      DisplayName: !Ref SCPPortfolioName
+      AcceptLanguage: "en"
+      ProviderName: "security"
+
+  SCPProduct:
+    Type: "AWS::ServiceCatalog::CloudFormationProduct"
+    Properties:
+      AcceptLanguage: "en"
+      Description: !Ref SCPProductDescription
+      Distributor: "Security Team"
+      Name: !Ref SCPProductName
+      Owner: "Security Team"
+      SupportEmail: "scp@security.com"
+      SupportUrl: "https://www.security.com"
+      SupportDescription: "Security team"
+      ProvisioningArtifactParameters:
+      -
+        Description: "Aug 2021"
+        Name: "Aug 2021 v1.0"
+        Info:
+          LoadTemplateFromURL: !Sub
+            - 'https://s3.${Region}.amazonaws.com.cn/${BucketName}/${TemplatePath}'
+            - Region: !Ref AWS::Region
+              BucketName: !ImportValue CloudFormationBucketName
+              TemplatePath: !Ref SourceTemplate
+  SCPAssociation:
+    Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
+    Properties:
+      ProductId: !Ref SCPProduct
+      PortfolioId: !Ref SCPPortfolio
+
+  PortfolioPrincipalAssociation:
+    Type: "AWS::ServiceCatalog::PortfolioPrincipalAssociation"
+    Properties:
+      PrincipalARN: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:${SCPCatalogAdministrator}"
+      PortfolioId: !Ref SCPPortfolio
+      PrincipalType: IAM
+
+  ServiceCatalogLaunchRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "servicecatalog.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess"
+      Path: "/"
+
+  ServiceCatalogLaunchConstraint:
+    Type: "AWS::ServiceCatalog::LaunchRoleConstraint"
+    Properties:
+      Description: This is a launch constraint created for SCP portfolio
+      AcceptLanguage: en
+      PortfolioId: !Ref SCPPortfolio
+      ProductId: !Ref SCPProduct
+      RoleArn: !GetAtt ServiceCatalogLaunchRole.Arn
+
+  ServiceCatalogTagOption:
+    Type: "AWS::ServiceCatalog::TagOption"
+    Properties:
+      Active: true
+      Value: !Sub "scp-${AWS::StackName}"
+      Key: "Name"
+
+  ServiceCatalogTagOptionAssociation:
+    Type: "AWS::ServiceCatalog::TagOptionAssociation"
+    Properties:
+      TagOptionId: !Ref ServiceCatalogTagOption
+      ResourceId: !Ref SCPPortfolio
+
+Outputs:
+  ScpS3Bucket:
+    Description: The bucket name for SCP polily files.
+    Value: !Ref ScpS3Bucket

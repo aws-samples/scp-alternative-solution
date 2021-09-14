@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create the S3 bucket to store CloudFormation templates in Security Account.
+Resources:
+  CloudFormationBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub 'cloudformation-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: "Application"
+          Value: SCP
+Outputs:
+  CloudFormationBucket:
+    Description: The bucket name for the shared CloudFormation templates.
+    Value: !Ref CloudFormationBucket
+    Export:
+      Name: CloudFormationBucketName
+

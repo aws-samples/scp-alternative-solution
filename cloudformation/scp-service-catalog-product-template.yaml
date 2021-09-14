@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: SCP account register cloudformation template.
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: Parameters for the new created account
+        Parameters:
+          - MemberAccountID
+          - OrganizationUnitID
+
+Parameters:
+  MemberAccountID:
+    Description: "Enter Member Account ID to apply the SCP policy."
+    Type: String
+    AllowedPattern: ".+"
+    ConstraintDescription: "Account ID"
+  OrganizationUnitID:
+    Description: "AWS Organization Unit ID"
+    Type: String
+    AllowedPattern: ".+"
+    ConstraintDescription: "Enter the AWS Organization Unit ID of the Member Account"
+
+Resources:
+  SCPAccountRegister:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "scp-account-register.main"
+      Runtime: "python3.6"
+      Role: !GetAtt LambdaExecuteRole.Arn
+      Timeout: 900
+      TracingConfig:
+        Mode: "Active"
+      Code:
+        S3Bucket: "{{resolve:ssm:/scp/cloudformation-s3-bucket-name}}"
+        S3Key: "scp-account-register.zip"
+      Environment:
+        Variables:
+          "MANAGEMENT_ACCOUNT_ID": "{{resolve:ssm:/scp/management-account-id}}"
+          "ACCOUNT_ID": !Ref MemberAccountID
+          "OU_ID": !Ref OrganizationUnitID
+          "CREATE_SCP_TRAIL": "yes"
+          "DYNAMODB_TABLE_ARN": "{{resolve:ssm:/scp/dynamodb-arn}}"
+          "SNS_TOPIC_ARN": "{{resolve:ssm:/scp/sns-topic-arn}}"
+          "SCP_EVENT_BUS_ARN": "{{resolve:ssm:/scp/event-bus-arn}}"
+          "SCP_EVENT_RULE_ARN": "{{resolve:ssm:/scp/event-rule-arn}}"
+          "S3_BUCKET_NAME": "{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}"
+          "ORGANIZATION_ROLE": "{{resolve:ssm:/scp/organization-access-role-name}}"
+          "PERMISSION_BOUNDARY_NAME": "{{resolve:ssm:/scp/permission-boundary-name}}"
+          "READ_POLICY_STATEMENT_SID": "{{resolve:ssm:/scp/read-policy-statement-id}}"
+          "S3_OBJECT_FOLDER": "{{resolve:ssm:/scp/s3-object-folder}}"
+          "MANAGEMENT_ACCOUNT_ACCESS_ROLE": "{{resolve:ssm:/scp/management-account-access-role}}"
+  LambdaExecuteRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: "Allow"
+          Principal:
+            Service:
+              - "lambda.amazonaws.com"
+          Action:
+            - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
+        - PolicyName: allowDynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              Resource: !Sub "{{resolve:ssm:/scp/dynamodb-arn}}"
+        - PolicyName: allowS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/cloudformation-s3-bucket-name}}'
+                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/cloudformation-s3-bucket-name}}/*'
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+                - s3:PutBucketPolicy
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}'
+                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}/*'
+        - PolicyName: allowSns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Sub "{{resolve:ssm:/scp/sns-topic-arn}}"
+        - PolicyName: eventBus
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - events:DescribeEventBus
+                - events:PutPermission
+              Resource: !Sub '{{resolve:ssm:/scp/event-bus-arn}}'
+        - PolicyName: eventRule
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - events:DescribeRule
+                - events:PutRule
+              Resource: !Sub '{{resolve:ssm:/scp/event-rule-arn}}'
+        - PolicyName: allowAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: !Sub 'arn:${AWS::Partition}:iam::{{resolve:ssm:/scp/management-account-id}}:role/{{resolve:ssm:/scp/management-account-access-role}}'
+
+  TriggerLambda:
+    Type: "Custom::TriggerLambda"
+    DeletionPolicy: Retain
+    DependsOn:
+      - SCPAccountRegister
+      - LambdaExecuteRole
+    Properties:
+      ServiceToken: !GetAtt SCPAccountRegister.Arn
+Outputs:
+  MemberAccountID:
+    Description: The member account id.
+    Value:
+      Ref: MemberAccountID
+  OrganizationUnitID:
+    Description: The Organization Unit ID of the member account.
+    Value:
+      Ref: OrganizationUnitID
