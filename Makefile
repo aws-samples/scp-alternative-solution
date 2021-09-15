@@ -1,4 +1,5 @@
 build:
+	[ -d assets ] || mkdir assets
 	rm -f assets/*
 	cd lambda && zip ../assets/scp-s3-event-dispatcher.zip scp-s3-event-dispatcher.py
 	cd lambda && zip ../assets/scp-iam-event-dispatcher.zip scp-iam-event-dispatcher.py
