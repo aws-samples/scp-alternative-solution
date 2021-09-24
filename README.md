@@ -80,9 +80,9 @@ Log in to the management account, select the CloudFormation template file [010-c
 Login to Security account and perform the following deployment:
 
 * Select the CloudFormation template file [020-create-s3-bucket-in-security-account.yaml](cloudformation/020-create-s3-bucket-in-security-account.yaml) to create an S3 bucket for CloudFormation deployment.
-    * *Note*: The SCP policy files should be uploaded to the bucket folder *permission-boundary-policy* in the security account, The naming convention of the policy files are:
-        * Account-level policy file: *account-<ACCOUNT-ID>.json*
-        * Organization unit level file: *<OrganizationUnit-ID>.json*
+    * *Note*: The SCP policy files should be uploaded to the bucket folder **permission-boundary-policy** in the security account, The naming convention of the policy files are:
+        * Account-level policy file: `account-<ACCOUNT-ID>.json`
+        * Organization unit level file: `<OrganizationUnit-ID>.json`
 * The assets file has been created in step __Build Artifacts__. Upload all the files in the assets directory to the root directory of the above S3 bucket.
 * Select the CloudFormation template file [030-create-scp-infra-in-security-account.yaml](cloudformation/030-create-scp-infra-in-security-account.yaml) to create the required infrastructure.
     * **ManagementAccountID**: The AWS management Account ID
