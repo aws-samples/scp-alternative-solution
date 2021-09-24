@@ -4,7 +4,7 @@ AWS Organizations provides central governance and management for multiple accoun
 
 However Service Control Policies (SCPs) feature in AWS Organizations is not available in the China regions (BJS and ZHY) yet as of Sep 2021.
 
-This repository is part of [the blog post](TBD) that guides users through implementing a SCP Alternative Solution for China Region from scratch.
+This repository is part of [the CN blog post](https://aws.amazon.com/cn/blogs/china/scp-alternative-based-on-iam-permission-boundaries/) that guides users through implementing a SCP Alternative Solution for China Region from scratch.
 
 ## Rationale
 
