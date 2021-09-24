@@ -92,6 +92,20 @@ Login to Security account and perform the following deployment:
         * IAM Role: e.g role/Operation
         * IAM User: e.g user/Alice
 
+### Limitation
+
+This is a SCP workaround solution by using AWS IAM's permission boundary, the user should be aware of the limitations prior to using it:
+
+1. Since it is based on AWS IAM's permission boundary, which is essentially an IAM managed policy. The size of each managed policy cannot exceed 6,144 characters per the [doc](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html#reference_iam-quotas-entity-length).
+1. The feature [SCP policy inheritance](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_inheritance.html) in AWS Organizations is not supported in the alternative solution. It's required to create the policy in S3 bucket for each organization unit.
+1. The infra resources created for the solution in registered accounts are not allowed to be modified, these `Deny` actions will be appended to the default IAM permission boundary policy by default.
+1. The core resources in the solution are deployed in security account, it's crucial to ensure the actions executed in the lambda functions won't be affected by attached IAM permission boundary policy. By default it's not allowed to register the security account into the SCP service catalog.
+1. During the creation of the IAM permission boundary for the registered accounts, it's required to assume to the registered accounts from the master accounts to manage the IAM permission boundary policy. To avoid the permission issues caused by the attached IAM permission boundary policy, the IAM admin role (`OrganizationAccountAccessRole` by default) is reserved to not attach any IAM permission boundary policies. The user can specify arbitary role name by CloudFormation parameter `OrganizationAccessRoleName` during the deployment.
+
+### Recommendation
+
+As the services and features in AWS China regions are moving very quickly, it's highly recommended to move to native SCP feature once it's available in AWS China regions.
+
 ## License
 
 This sample code is made available under the MIT-0 license. See the LICENSE file.
