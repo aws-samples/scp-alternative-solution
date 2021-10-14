@@ -6,6 +6,26 @@ However Service Control Policies (SCPs) feature in AWS Organizations is not avai
 
 This repository is part of [the Chinese blog post](https://aws.amazon.com/cn/blogs/china/scp-alternative-based-on-iam-permission-boundaries/) that guides users through implementing a SCP Alternative Solution for China Region from scratch.
 
+Table of Contents
+=================
+
+* [SCP Alternative Solution For China Region](#scp-alternative-solution-for-china-region)
+   * [Rationale](#rationale)
+   * [Architecture Overview](#architecture-overview)
+   * [Deployment](#deployment)
+      * [Build Artifacts](#build-artifacts)
+      * [Deployment for Management Account](#deployment-for-management-account)
+      * [Deployment for Security Account](#deployment-for-security-account)
+   * [User Guide](#user-guide)
+      * [Use Case 1: Initialize S3 bucket for the SCP polices files](#use-case-1-initialize-s3-bucket-for-the-scp-polices-files)
+      * [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
+      * [Use Case 3: Update SCP policy](#use-case-3-update-scp-policy)
+      * [Use Case 4: Apply the SCP policy to newly created IAM roles and users](#use-case-4-apply-the-scp-policy-to-newly-created-iam-roles-and-users)
+      * [Use Case 5: Subscribe the failures for lambda execution](#use-case-5-subscribe-the-failures-for-lambda-execution)
+   * [Limitation](#limitation)
+   * [Recommendation](#recommendation)
+   * [License](#license)
+
 ## Rationale
 
 Before we dive into the architecture, let’s learn more about policy evaluation logic in AWS.
