@@ -63,6 +63,9 @@ The architecture is based on AWS native services, the core AWS services used are
 
 ## Deployment
 
+<details>
+<summary>Click me to expand</summary>
+
 The infrastructure required in this solution can be deployed by the CloudFormation templates.
 
 ### Build Artifacts
@@ -113,7 +116,12 @@ Login to Security account and perform the following deployment:
         * IAM Role: e.g role/Operation
         * IAM User: e.g user/Alice
 
+</details>
+
 ## User Guide
+
+<details>
+<summary>Click me to expand</summary>
 
 After the deployments, all required infra resources for the solutiion are created successfully. Follow the instructions below to manage the "SCP policies" in the alternative solution.
 
@@ -179,6 +187,8 @@ A dedicated SNS topic is created in the account, the security administrators can
 
 * Update the CloudFormation Stack deployed in security account.
 * Input the desired email address in parameter `Email` to subscribe the failure notifications.
+
+</details>
 
 ## Limitation
 
