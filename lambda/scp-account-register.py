@@ -11,6 +11,7 @@ import boto3
 import time
 import copy
 import re
+import traceback
 from hashlib import blake2b
 from urllib.request import Request, urlopen
 
@@ -544,6 +545,26 @@ def assume_role(sts_client, account, context, service="iam"):
 
     return client
 
+def assume_role_resource(sts_client, account, context, service="iam"):
+    """
+    Assume to the target account.
+    """
+    assume_role_arn = "arn:" + get_aws_partition(context) + ":iam::" \
+                    + account + ":role/" + ORGANIZATION_ROLE
+
+    Credentials = sts_client.assume_role(
+        RoleArn=assume_role_arn,
+        RoleSessionName=account,
+        DurationSeconds=900)
+
+    client = boto3.resource(
+        service,
+        aws_access_key_id=Credentials['Credentials']['AccessKeyId'],
+        aws_secret_access_key=Credentials['Credentials']['SecretAccessKey'],
+        aws_session_token=Credentials['Credentials']['SessionToken'])
+
+    return client
+
 def delete_oldest_policy_versions(iam_client, policy_arn):
     """
     Delete the oldest non-default PolicyVersions until we can assure the success of a new PolicyVersion creation.
@@ -827,6 +848,70 @@ def create_event_rule_in_account(target_account_id, context):
     	]
     )
 
+def delete_event_rule_in_account(target_account_id, context):
+    """
+    Delete event rule/event target/IAM role/IAM policy in the target account.
+    """
+    current_account_id = get_current_account_id(context)
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+    target_events_client = assume_role(sts_client, target_account_id, context, "events")
+    target_iam_client = assume_role(sts_client, target_account_id, context, "iam")
+
+    existing_rules = target_events_client.list_rules(
+        NamePrefix=ACCOUNT_EVENT_RULE_NAME,
+        EventBusName=ACCOUNT_EVENT_BUS_NAME,
+    )
+
+    rule_exists = False
+    for rule in existing_rules["Rules"]:
+        if rule["Name"] == ACCOUNT_EVENT_RULE_NAME:
+            print("Event rule {0} was created in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            rule_exists = True
+            break
+
+    if rule_exists:
+        print("Event rule {0} does exist in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+
+        target_events_client.remove_targets(
+            Rule=ACCOUNT_EVENT_RULE_NAME,
+            Ids=[ACCOUNT_EVENT_RULE_NAME],
+            Force=True
+        )
+
+        target_events_client.delete_rule(Name=ACCOUNT_EVENT_RULE_NAME)
+
+    # Detach policy from role
+    role_exists = False
+    roles_response = target_iam_client.list_roles()
+    role_list = roles_response['Roles']
+    for key in role_list:
+        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM role {0} was created in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_exists = True
+            break
+
+    if role_exists:
+        role_policy_response = target_iam_client.list_attached_role_policies(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+        )
+
+        for policy in role_policy_response["AttachedPolicies"]:
+            target_iam_client.detach_role_policy(
+                PolicyArn=policy["PolicyArn"],
+                RoleName=ACCOUNT_EVENT_RULE_NAME
+            )
+
+            iam_policy_response = target_iam_client.delete_policy(
+                PolicyArn=ACCOUNT_EVENT_RULE_NAME
+            )
+
+        iam_role_response = target_iam_client.delete_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME
+        )
+
 def get_current_account_arn(context):
     return get_account_arn(get_current_account_id(context), context)
 
@@ -959,6 +1044,20 @@ def update_item(account_id, key, value):
         failure_notify('Failed to write item {0} to {1}, detailed failure: {1}'
                        .format(value, account_id, e))
 
+def delete_item(account_id):
+    """
+    Delete the value of the key in dyanmodb table.
+    """
+    try:
+        dynamodb_table.delete_item(
+            Key={
+                'AccountId': account_id
+            }
+        )
+    except Exception as e:
+        failure_notify('Failed to delete item {0}, detailed failure: {1}'
+                       .format(account_id, e))
+
 def init_item(account_id, mgt_account_id, ou_id):
     """
     Init the account and write the account to dynamodb table.
@@ -1061,6 +1160,7 @@ def create_and_enable_scp_trail(target_account_id, context):
                     }
                 )
             print(bucket_name)
+
             target_s3_client.put_bucket_policy(Bucket=bucket_name,
                                                Policy=json.dumps(bucket_policy))
         except Exception as e:
@@ -1090,11 +1190,41 @@ def create_and_enable_scp_trail(target_account_id, context):
             .format(trail_bucket, e)
         failure_notify(msg)
 
+    return
+
+def delete_scp_trail(target_account_id, context):
+    """
+    Delete the CloudTrail for SCP.
+    """
+    current_account_id = get_current_account_id(context)
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+
+    target_s3_resource = assume_role_resource(sts_client, target_account_id, context, "s3")
+    target_s3_client = assume_role(sts_client, target_account_id, context, "s3")
+    target_trail_client = assume_role(sts_client, target_account_id, context, "cloudtrail")
+
+    bucket_name = ACCOUNT_BUCKET_PREFIX + '-' + target_account_id
+    trail_name = ACCOUNT_TRAIL_NAME
+
+    try:
+        target_s3_client.head_bucket(Bucket=bucket_name)
+        target_s3_resource_client = target_s3_resource.Bucket(bucket_name)
+        target_s3_resource_client.objects.all().delete()
+        target_s3_resource_client.delete()
+    except Exception as e:
+        print("The bucket was not created, Hit error {0}".format(e))
+
+    # Delete CloudTrail
+    response_trail_list = target_trail_client.list_trails()
+    for trail in response_trail_list['Trails']:
+        if (('Name' in trail) and (trail['Name'] == trail_name)):
+            print("CloudTrail {0} was created, deleting....".format(trail_name))
+            target_trail_client.delete_trail(Name=trail_name)
+            return
+
 def send_response(rs, rd):
     """
     Packages response and send signals to CloudFormation
-    :param e: The event given to this Lambda function
-    :param c: Context object, as above
     :param rs: Returned status to be sent back to CFN
     :param rd: Returned data to be sent back to CFN
     """
@@ -1119,7 +1249,67 @@ def send_response(rs, rd):
     r = urlopen(req)
     print("Status message: {} {}".format(r.msg, r.getcode()))
 
-def main(event, context):
+############################################################
+#                 SIGNAL HANDLER FUNCTIONS                 #
+############################################################
+
+def create():
+    """
+    Enroll the target AWS account to the framework:
+    - Create account metadata in dynamodb.
+    - Create required resources in the target account to monitor IAM activity.
+    - Create and attach the IAM permission boundary policy for SCP to IAM roles.
+    """
+    bucket_name = S3_BUCKET_NAME
+    init_item(ACCOUNT_ID, MANAGEMENT_ACCOUNT_ID, OU_ID)
+    for object_key in get_valid_object_key():
+        append_item_to_list(ACCOUNT_ID, 'ScpPolicyPathList', object_key)
+        policy_version_document_json = create_policy_statement(bucket_name, object_key)
+        create_policy_in_account(policy_version_document_json, ACCOUNT_ID, GLOBAL_CONTEXT, object_key)
+        update_item(ACCOUNT_ID, 'ScpUpdateTime', get_current_time())
+
+    if str2bool(CREATE_SCP_TRAIL):
+        create_and_enable_scp_trail(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    create_event_rule_in_account(ACCOUNT_ID, GLOBAL_CONTEXT)
+    update_resource_policy(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    return
+
+def delete():
+    """
+    Enroll the target AWS account to the framework:
+    - Delete required resources in the target account to monitor IAM activity.
+    - Delete account metadata in dynamodb.
+    - Dettach the IAM permission boundary policy for SCP to IAM roles.
+    """
+    if str2bool(CREATE_SCP_TRAIL):
+        delete_scp_trail(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    delete_event_rule_in_account(ACCOUNT_ID, GLOBAL_CONTEXT)
+    delete_item(ACCOUNT_ID)
+
+    return
+
+def update():
+    """
+    Re-enroll account with updated parameters.
+    """
+    delete()
+    create()
+
+    return
+
+############################################################
+#                LAMBDA FUNCTION HANDLER                   #
+############################################################
+# IMPORTANT: The Lambda function will be called whenever   #
+# changes are made to the stack. Thus, ensure that the     #
+# signals are handled by your Lambda function correctly,   #
+# or the stack could get stuck in the DELETE_FAILED state  #
+############################################################
+
+def main(event, context, reply=True):
     """
     Main handler of the lambda function which tries to create or update the
     permission boundary policy.
@@ -1128,21 +1318,38 @@ def main(event, context):
     GLOBAL_EVENT = event
     GLOBAL_CONTEXT = context
 
+    request_type = event['RequestType']
+
     print("Lambda Event: {0}".format(event))
     if ACCOUNT_ID == get_current_account_id(context):
         failure_notify("Account register for the security account {0} is not allowed".format(ACCOUNT_ID))
 
-    bucket_name = S3_BUCKET_NAME
-    init_item(ACCOUNT_ID, MANAGEMENT_ACCOUNT_ID, OU_ID)
-    for object_key in get_valid_object_key():
-        append_item_to_list(ACCOUNT_ID, 'ScpPolicyPathList', object_key)
-        policy_version_document_json = create_policy_statement(bucket_name, object_key)
-        create_policy_in_account(policy_version_document_json, ACCOUNT_ID, context, object_key)
-        update_item(ACCOUNT_ID, 'ScpUpdateTime', get_current_time())
-
-    if str2bool(CREATE_SCP_TRAIL):
-        create_and_enable_scp_trail(ACCOUNT_ID, context)
-
-    create_event_rule_in_account(ACCOUNT_ID, context)
-    update_resource_policy(ACCOUNT_ID, context)
-    send_response("SUCCESS", { "Message": "Account register successfully" })
+    try:
+        if request_type == 'Create':
+            create()
+            if reply == True:
+                send_response("SUCCESS", {"Message": "Created"})
+        elif request_type == 'Update':
+            update()
+            if reply == True:
+                send_response("SUCCESS",
+                          {"Message": "Updated"})
+        elif request_type == 'Delete':
+            delete()
+            if reply == True:
+                send_response("SUCCESS",
+                          {"Message": "Deleted"})
+        else:
+            if reply == True:
+                send_response("FAILED",
+                          {"Message": "Unexpected"})
+    except Exception as ex:
+        print(ex)
+        traceback.print_tb(ex.__traceback__)
+        if reply == True:
+            send_response(
+                "FAILED",
+                {
+                    "Message": "Exception"
+                }
+            )
