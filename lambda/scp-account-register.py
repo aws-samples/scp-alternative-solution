@@ -434,6 +434,21 @@ def bind_permission_boundary_role(iam_client, role_name, permission_boundary_arn
                to exceptional {2}".format(permission_boundary_arn, role_name, e)
         failure_notify(msg)
 
+def delete_permission_boundary_role(iam_client, role_name):
+    """
+    Delete the permission boundary arn for IAM role.
+    """
+    try:
+        iam_client.delete_role_permissions_boundary(
+            RoleName = role_name,
+        )
+        print("Default permission boundary policy has been deleted for role {0}"
+              .format(role_name))
+    except Exception as e:
+        msg = "Failed to delete permission boundary policy for role {0} due \
+               to exceptional {1}".format(role_name, e)
+        failure_notify(msg)
+
 def bind_permission_boundary_user(iam_client, user_name, permission_boundary_arn):
     """
     Bind the permission boundary arn to the user.
@@ -450,6 +465,21 @@ def bind_permission_boundary_user(iam_client, user_name, permission_boundary_arn
               to exceptional {2}".format(permission_boundary_arn, user_name, e)
         failure_notify(msg)
 
+def delete_permission_boundary_user(iam_client, user_name):
+    """
+    Delete the permission boundary arn for IAM user.
+    """
+    try:
+        iam_client.delete_user_permissions_boundary(
+            UserName = user_name
+        )
+        print("Default permission boundary policy has been deleted for user {0}"
+              .format(user_name))
+    except Exception as e:
+        msg = "Failed to delete default permission boundary policy for user {0} due \
+              to exceptional {1}".format(user_name, e)
+        failure_notify(msg)
+
 def generate_policy_statement_sid(s3_object_key):
     """
     Generate an unique PolicyStatement ID for the inputted s3_object.
@@ -459,6 +489,8 @@ def generate_policy_statement_sid(s3_object_key):
     """
     sid_prefix = extract_sid_prefix(s3_object_key)
     sid_prefix_hash = blake2b_hash(sid_prefix)[:HASH_PREFIX_NUM]
+    print("The generated hash is {0} by s3 object key {1}".format(sid_prefix_hash, s3_object_key))
+
     return "%s" % (sid_prefix_hash)
 
 def create_policy_statement(s3_bucket_name, s3_object_key):
@@ -628,6 +660,51 @@ def process_permission_boundary_to_role(target_iam_client,
             except Exception as e:
                 failure_notify(e)
 
+def delete_permission_boundary_to_role(target_iam_client,
+                                        policy_arn,
+                                        account,
+                                        s3_object_key):
+    """
+    The main function to delete the permission boundary against the IAM roles
+    """
+
+    role_list = get_available_roles(target_iam_client)
+
+    for role in role_list:
+        print("Processing role {0}".format(role))
+        response = target_iam_client.get_role(RoleName=role)
+        role_permission_boundary_arn = ""
+
+        if "PermissionsBoundary" in response["Role"]:
+            role_permission_boundary_arn = response["Role"]["PermissionsBoundary"]["PermissionsBoundaryArn"]
+        if role_permission_boundary_arn:
+            if role_permission_boundary_arn == policy_arn:
+                delete_permission_boundary_role(target_iam_client, role)
+            else:
+                policy_reponse = target_iam_client.get_policy(PolicyArn=role_permission_boundary_arn)
+                default_version_id = policy_reponse["Policy"]["DefaultVersionId"]
+                target_policy_version = target_iam_client.get_policy_version(
+                    PolicyArn=role_permission_boundary_arn,
+                    VersionId=default_version_id
+                )
+
+                target_policy_version_document_json = target_policy_version["PolicyVersion"]["Document"]
+                consolidated_policy_json = delete_permission_boundary_arn(
+                                          target_policy=target_policy_version_document_json,
+                                          sid_prefix=generate_policy_statement_sid(s3_object_key))
+                delete_oldest_policy_versions(target_iam_client, role_permission_boundary_arn)
+                print("Setting it as the default policy version for {0}".format(role_permission_boundary_arn))
+                try:
+                    print("Creating policy version for policy arn {0}"
+                          .format(role_permission_boundary_arn))
+                    policy_version_resp = target_iam_client.create_policy_version(
+                        PolicyArn=role_permission_boundary_arn,
+                        PolicyDocument=json.dumps(consolidated_policy_json),
+                        SetAsDefault=True,
+                    )
+                except Exception as e:
+                    failure_notify(e)
+
 def process_permission_boundary_to_user(target_iam_client,
                                         policy_arn,
                                         account,
@@ -673,6 +750,50 @@ def process_permission_boundary_to_user(target_iam_client,
                 )
             except Exception as e:
                 failure_notify(e)
+
+def delete_permission_boundary_to_user(target_iam_client,
+                                        policy_arn,
+                                        account,
+                                        s3_object_key):
+    """
+    The main function to delete the permission boundary against the IAM roles
+    """
+    user_list = get_available_users(target_iam_client)
+
+    for user_name in user_list:
+        print("Deleting permission boundary for user {0}".format(user_name))
+        response = target_iam_client.get_user(UserName=user_name)
+        user_permission_boundary_arn = ""
+
+        if "PermissionsBoundary" in response["User"]:
+           user_permission_boundary_arn = response["User"]["PermissionsBoundary"]["PermissionsBoundaryArn"]
+        if user_permission_boundary_arn:
+            if user_permission_boundary_arn == policy_arn:
+                delete_permission_boundary_user(target_iam_client, user_name)
+            else:
+                policy_reponse = target_iam_client.get_policy(PolicyArn=user_permission_boundary_arn)
+                default_version_id = policy_reponse["Policy"]["DefaultVersionId"]
+                target_policy_version = target_iam_client.get_policy_version(
+                    PolicyArn=user_permission_boundary_arn,
+                    VersionId=default_version_id
+                )
+
+                target_policy_version_document_json = target_policy_version["PolicyVersion"]["Document"]
+                consolidated_policy_json = delete_permission_boundary_arn(
+                                          target_policy=target_policy_version_document_json,
+                                          sid_prefix=generate_policy_statement_sid(s3_object_key))
+                delete_oldest_policy_versions(target_iam_client, user_permission_boundary_arn)
+                print("Setting it as the default policy version for {0}".format(user_permission_boundary_arn))
+                try:
+                    print("Creating policy version for policy arn {0}"
+                          .format(user_permission_boundary_arn))
+                    policy_version_resp = target_iam_client.create_policy_version(
+                        PolicyArn=user_permission_boundary_arn,
+                        PolicyDocument=json.dumps(consolidated_policy_json),
+                        SetAsDefault=True,
+                    )
+                except Exception as e:
+                    failure_notify(e)
 
 def create_policy_in_account(policy_version_document_json, account, context, s3_object_key):
     """
@@ -725,6 +846,21 @@ def create_policy_in_account(policy_version_document_json, account, context, s3_
                                         render_policy_version_document_json,
                                         s3_object_key)
 
+def delete_policy_in_account(account, context, s3_object_key):
+    """
+    Delete the global permission boundary in the target account.
+    """
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+    target_iam_client = assume_role(sts_client, account, context)
+    policy_arn = "arn:" + get_aws_partition(context) + ":iam::" + account \
+            + ":policy/" + PERMISSION_BOUNDARY_NAME
+
+    delete_permission_boundary_to_user(target_iam_client,
+                                        policy_arn, account,
+                                        s3_object_key)
+    delete_permission_boundary_to_role(target_iam_client,
+                                        policy_arn, account,
+                                        s3_object_key)
 
 def consolidate_permission_boundary_arn(source_policy, target_policy, sid_prefix):
 
@@ -748,6 +884,23 @@ def consolidate_permission_boundary_arn(source_policy, target_policy, sid_prefix
         )
 
     return tmp_policy
+
+def delete_permission_boundary_arn(target_policy, sid_prefix):
+
+    tmp_policy = copy.deepcopy(target_policy)
+
+    for stmt in target_policy["Statement"]:
+        if (
+            "Sid" in stmt
+            and stmt["Sid"][0 : len(sid_prefix)]
+            == sid_prefix
+        ):
+            tmp_policy["Statement"].remove(stmt)
+
+    print("The consolidated policy json {0}".format(tmp_policy))
+
+    return tmp_policy
+
 
 def check_s3_object_exists(bucket_name, object_key):
     """
@@ -1283,6 +1436,9 @@ def delete():
     - Delete account metadata in dynamodb.
     - Dettach the IAM permission boundary policy for SCP to IAM roles.
     """
+    for object_key in get_valid_object_key():
+        delete_policy_in_account(ACCOUNT_ID, GLOBAL_CONTEXT, object_key)
+
     if str2bool(CREATE_SCP_TRAIL):
         delete_scp_trail(ACCOUNT_ID, GLOBAL_CONTEXT)
 
