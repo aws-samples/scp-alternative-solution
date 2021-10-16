@@ -89,7 +89,7 @@ SCP_ENFORCE_POLICY = [
             "arn:aws-cn:iam::<ACCOUNT_ID>:policy/{0}".format(PERMISSION_BOUNDARY_NAME),
             "arn:aws-cn:cloudtrail:cn-north-1:<ACCOUNT_ID>:trail/{0}".format(ACCOUNT_TRAIL_NAME),
             "arn:aws-cn:s3:::{0}-<ACCOUNT_ID>".format(ACCOUNT_BUCKET_PREFIX),
-            "arn:aws-cn:events:cn-north-1::rule/{0}".format(ACCOUNT_EVENT_RULE_NAME)
+            "arn:aws-cn:events:cn-north-1:<ACCOUNT_ID>:rule/{0}".format(ACCOUNT_EVENT_RULE_NAME)
         ],
         "Condition": {
             "ArnNotLike": {
@@ -953,53 +953,113 @@ def create_event_rule_in_account(target_account_id, context):
         NamePrefix=ACCOUNT_EVENT_RULE_NAME,
         EventBusName=ACCOUNT_EVENT_BUS_NAME,
     )
-
+    event_rule_exists = False
     for rule in existing_rules["Rules"]:
         if rule["Name"] == ACCOUNT_EVENT_RULE_NAME:
             print("Event rule {0} was created in account {1}"
               .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
-            return
+            event_rule_exists = True
+            break
 
-    print("Event rule {0} not found in account {1}"
-          .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
-    try:
-        target_events_client.put_rule(
-            Name=ACCOUNT_EVENT_RULE_NAME,
-            EventPattern=json.dumps(ACCOUNT_EVENT_PATTERN),
-            State='ENABLED',
-            Description='Event rule for SCP Alternative Solution',
-            EventBusName=ACCOUNT_EVENT_BUS_NAME
+    if not event_rule_exists:
+        print("Event rule {0} not found in account {1}, creating..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+        try:
+            target_events_client.put_rule(
+                Name=ACCOUNT_EVENT_RULE_NAME,
+                EventPattern=json.dumps(ACCOUNT_EVENT_PATTERN),
+                State='ENABLED',
+                Description='Event rule for SCP Alternative Solution',
+                EventBusName=ACCOUNT_EVENT_BUS_NAME
+            )
+        except Exception as e:
+            msg = "Failed to create event rule {0} in account {1}"\
+                  .format(ACCOUNT_EVENT_RULE_NAME, target_account_id)
+            failure_notify(msg)
+
+    role_exists = False
+    roles_response = target_iam_client.list_roles()
+    role_list = roles_response['Roles']
+    for key in role_list:
+        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM role {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_exists = True
+            break
+
+    if not role_exists:
+        iam_role_response = target_iam_client.create_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+            AssumeRolePolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_TRUST_POLICY),
         )
-    except Exception as e:
-        msg = "Failed to create event rule {0} in account {1}"\
-              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id)
-        failure_notify(msg)
+    else:
+        iam_role_response = target_iam_client.get_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME
+        )
 
-    iam_policy_response = target_iam_client.create_policy(
-        PolicyName=ACCOUNT_EVENT_RULE_NAME,
-        PolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_POLICY),
-    )
+    policy_exists = False
+    policy_response = target_iam_client.list_policies(
+            Scope='Local',
+            PolicyUsageFilter='PermissionsPolicy',
+        )
+    policy_list = policy_response['Policies']
+    for key in policy_list:
+        if key["PolicyName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM policy {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            policy_exists = True
+            break
 
-    iam_role_response = target_iam_client.create_role(
-        RoleName=ACCOUNT_EVENT_RULE_NAME,
-        AssumeRolePolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_TRUST_POLICY),
-    )
+    if not policy_exists:
+        target_iam_client.create_policy(
+            PolicyName=ACCOUNT_EVENT_RULE_NAME,
+            PolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_POLICY),
+        )
 
-    target_iam_client.attach_role_policy(
-        RoleName=iam_role_response['Role']['RoleName'],
-        PolicyArn=iam_policy_response['Policy']['Arn']
-    )
+    role_policy_exists = False
+    role_policy_response = target_iam_client.list_attached_role_policies(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+        )
 
-    target_events_client.put_targets(
+    role_policy_list = role_policy_response['AttachedPolicies']
+    for key in role_policy_list:
+        if key["PolicyName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM policy {0} was created attached in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_policy_exists = True
+            break
+
+    if not role_policy_exists:
+        l_policy_arn = "arn:" + get_aws_partition(GLOBAL_CONTEXT) + ":iam::" + ACCOUNT_ID \
+                + ":policy/" + ACCOUNT_EVENT_RULE_NAME
+        target_iam_client.attach_role_policy(
+            RoleName=iam_role_response['Role']['RoleName'],
+            PolicyArn=l_policy_arn
+        )
+
+    target_exists = False
+    target_response = target_events_client.list_targets_by_rule(
         Rule=ACCOUNT_EVENT_RULE_NAME,
-        Targets=[
-            {
-                'Id': ACCOUNT_EVENT_RULE_NAME,
-    		    'Arn': SCP_EVENT_BUS_ARN,
-                'RoleArn': iam_role_response['Role']['Arn']
-            },
-    	]
     )
+    target_list = target_response['Targets']
+    for key in target_list:
+        if key["Id"] == ACCOUNT_EVENT_RULE_NAME:
+            print("Event target {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            target_exists = True
+            break
+
+    if not target_exists:
+        target_events_client.put_targets(
+            Rule=ACCOUNT_EVENT_RULE_NAME,
+            Targets=[
+                {
+                    'Id': ACCOUNT_EVENT_RULE_NAME,
+        		    'Arn': SCP_EVENT_BUS_ARN,
+                    'RoleArn': iam_role_response['Role']['Arn']
+                },
+        	]
+        )
 
 def delete_event_rule_in_account(target_account_id, context):
     """
@@ -1058,7 +1118,7 @@ def delete_event_rule_in_account(target_account_id, context):
             )
 
             iam_policy_response = target_iam_client.delete_policy(
-                PolicyArn=ACCOUNT_EVENT_RULE_NAME
+                PolicyArn=policy["PolicyArn"]
             )
 
         iam_role_response = target_iam_client.delete_role(

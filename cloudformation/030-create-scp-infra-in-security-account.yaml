@@ -415,7 +415,6 @@ Resources:
               - dynamodb:GetItem
               - dynamodb:PutItem
               - dynamodb:UpdateItem
-              - dynamodb:DeleteItem
               - dynamodb:Query
               - dynamodb:Scan
               Resource: !GetAtt ScpTable.Arn
