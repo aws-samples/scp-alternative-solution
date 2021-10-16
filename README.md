@@ -10,6 +10,7 @@ Table of Contents
 =================
 
 * [SCP Alternative Solution For China Region](#scp-alternative-solution-for-china-region)
+* [Table of Contents](#table-of-contents)
    * [Rationale](#rationale)
    * [Architecture Overview](#architecture-overview)
    * [Deployment](#deployment)
@@ -22,6 +23,7 @@ Table of Contents
       * [Use Case 3: Update SCP policy](#use-case-3-update-scp-policy)
       * [Use Case 4: Apply the SCP policy to newly created IAM roles and users](#use-case-4-apply-the-scp-policy-to-newly-created-iam-roles-and-users)
       * [Use Case 5: Subscribe the failures for lambda execution](#use-case-5-subscribe-the-failures-for-lambda-execution)
+      * [Use Case 6: Move to native SCP](#use-case-6-move-to-native-scp)
    * [Limitation](#limitation)
    * [Recommendation](#recommendation)
    * [License](#license)
@@ -187,6 +189,16 @@ A dedicated SNS topic is created in the account, the security administrators can
 
 * Update the CloudFormation Stack deployed in security account.
 * Input the desired email address in parameter `Email` to subscribe the failure notifications.
+
+### Use Case 6: Move to native SCP
+
+This is for the case that it needs to move to native SCP with SCP feature is natively supported in AWS Organizations. The steps below will work through to finish the migration from SCP alternative solution to native SCP.
+
+* Get the service control policy (SCP) that you previously created and stored in S3 bucket, [attach the SCP to the organizational unit (OU) accordingly.](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_attach.html)
+> Note: The SCP syntax is exactly the same between SCP Alternative Solution and Native SCP. You don't need any modifications on the "SCP Policies" while moving to native SCP.
+* Terminate all provisioned products for account register created via step [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
+* Terminate the CloudFormation Stacks created in step [Deployment for Security Account](#deployment-for-security-account)
+* Terminate the CloudFormation Stacks created in stesp [Deployment for Management Account](#deployment-for-management-account)
 
 </details>
 
