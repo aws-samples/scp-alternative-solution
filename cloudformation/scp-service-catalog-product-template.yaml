@@ -83,6 +83,7 @@ Resources:
               - dynamodb:UpdateItem
               - dynamodb:Query
               - dynamodb:Scan
+              - dynamodb:DeleteItem
               Resource: !Sub "{{resolve:ssm:/scp/dynamodb-arn}}"
         - PolicyName: allowS3
           PolicyDocument:
@@ -140,12 +141,10 @@ Resources:
 
   TriggerLambda:
     Type: "Custom::TriggerLambda"
-    DeletionPolicy: Retain
-    DependsOn:
-      - SCPAccountRegister
-      - LambdaExecuteRole
     Properties:
       ServiceToken: !GetAtt SCPAccountRegister.Arn
+      MemberAccountID: !Ref MemberAccountID
+      OrganizationUnitID: !Ref OrganizationUnitID
 Outputs:
   MemberAccountID:
     Description: The member account id.

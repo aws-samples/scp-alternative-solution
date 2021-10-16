@@ -9,22 +9,22 @@ This repository is part of [the Chinese blog post](https://aws.amazon.com/cn/blo
 Table of Contents
 =================
 
-* [SCP Alternative Solution For China Region](#scp-alternative-solution-for-china-region)
-   * [Rationale](#rationale)
-   * [Architecture Overview](#architecture-overview)
-   * [Deployment](#deployment)
-      * [Build Artifacts](#build-artifacts)
-      * [Deployment for Management Account](#deployment-for-management-account)
-      * [Deployment for Security Account](#deployment-for-security-account)
-   * [User Guide](#user-guide)
-      * [Use Case 1: Initialize S3 bucket for the SCP polices files](#use-case-1-initialize-s3-bucket-for-the-scp-polices-files)
-      * [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
-      * [Use Case 3: Update SCP policy](#use-case-3-update-scp-policy)
-      * [Use Case 4: Apply the SCP policy to newly created IAM roles and users](#use-case-4-apply-the-scp-policy-to-newly-created-iam-roles-and-users)
-      * [Use Case 5: Subscribe the failures for lambda execution](#use-case-5-subscribe-the-failures-for-lambda-execution)
-   * [Limitation](#limitation)
-   * [Recommendation](#recommendation)
-   * [License](#license)
+* [Rationale](#rationale)
+* [Architecture Overview](#architecture-overview)
+* [Deployment](#deployment)
+   * [Build Artifacts](#build-artifacts)
+   * [Deployment for Management Account](#deployment-for-management-account)
+   * [Deployment for Security Account](#deployment-for-security-account)
+* [User Guide](#user-guide)
+   * [Use Case 1: Initialize S3 bucket for the SCP polices files](#use-case-1-initialize-s3-bucket-for-the-scp-polices-files)
+   * [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
+   * [Use Case 3: Update SCP policy](#use-case-3-update-scp-policy)
+   * [Use Case 4: Apply the SCP policy to newly created IAM roles and users](#use-case-4-apply-the-scp-policy-to-newly-created-iam-roles-and-users)
+   * [Use Case 5: Subscribe the failures for lambda execution](#use-case-5-subscribe-the-failures-for-lambda-execution)
+   * [Use Case 6: Move to native SCP](#use-case-6-move-to-native-scp)
+* [Limitation](#limitation)
+* [Recommendation](#recommendation)
+* [License](#license)
 
 ## Rationale
 
@@ -67,6 +67,12 @@ The architecture is based on AWS native services, the core AWS services used are
 <summary>Click me to expand</summary>
 
 The infrastructure required in this solution can be deployed by the CloudFormation templates.
+
+### Prerequisites
+
+* The solution is target on AWS multi-account environment, the security account and management account is supposed to exist.
+* It's able to access to member accounts from the management account. This is the default capability for the accounts created via AWS Organizations. By default the role used to assume to member account is `OrganizationAccountAccessRole`, you can also specify arbitary IAM role name in the deployments.
+* The security account can assume to the management account, further perform the role-assuming described above to member accounts.
 
 ### Build Artifacts
 
@@ -187,6 +193,16 @@ A dedicated SNS topic is created in the account, the security administrators can
 
 * Update the CloudFormation Stack deployed in security account.
 * Input the desired email address in parameter `Email` to subscribe the failure notifications.
+
+### Use Case 6: Move to native SCP
+
+This is for the case that it needs to move to native SCP with SCP feature is natively supported in AWS Organizations. The steps below will work through to finish the migration from SCP alternative solution to native SCP.
+
+* Get the service control policy (SCP) that you previously created and stored in S3 bucket, [attach the SCP to the organizational unit (OU) accordingly.](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_attach.html)
+> Note: The SCP syntax is exactly the same between SCP Alternative Solution and Native SCP. You don't need any modifications on the "SCP Policies" while moving to native SCP.
+* Terminate all provisioned products for account register created via step [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
+* Terminate the CloudFormation Stacks created in step [Deployment for Security Account](#deployment-for-security-account)
+* Terminate the CloudFormation Stacks created in stesp [Deployment for Management Account](#deployment-for-management-account)
 
 </details>
 

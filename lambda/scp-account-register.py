@@ -11,6 +11,7 @@ import boto3
 import time
 import copy
 import re
+import traceback
 from hashlib import blake2b
 from urllib.request import Request, urlopen
 
@@ -88,7 +89,7 @@ SCP_ENFORCE_POLICY = [
             "arn:aws-cn:iam::<ACCOUNT_ID>:policy/{0}".format(PERMISSION_BOUNDARY_NAME),
             "arn:aws-cn:cloudtrail:cn-north-1:<ACCOUNT_ID>:trail/{0}".format(ACCOUNT_TRAIL_NAME),
             "arn:aws-cn:s3:::{0}-<ACCOUNT_ID>".format(ACCOUNT_BUCKET_PREFIX),
-            "arn:aws-cn:events:cn-north-1::rule/{0}".format(ACCOUNT_EVENT_RULE_NAME)
+            "arn:aws-cn:events:cn-north-1:<ACCOUNT_ID>:rule/{0}".format(ACCOUNT_EVENT_RULE_NAME)
         ],
         "Condition": {
             "ArnNotLike": {
@@ -433,6 +434,21 @@ def bind_permission_boundary_role(iam_client, role_name, permission_boundary_arn
                to exceptional {2}".format(permission_boundary_arn, role_name, e)
         failure_notify(msg)
 
+def delete_permission_boundary_role(iam_client, role_name):
+    """
+    Delete the permission boundary arn for IAM role.
+    """
+    try:
+        iam_client.delete_role_permissions_boundary(
+            RoleName = role_name,
+        )
+        print("Default permission boundary policy has been deleted for role {0}"
+              .format(role_name))
+    except Exception as e:
+        msg = "Failed to delete permission boundary policy for role {0} due \
+               to exceptional {1}".format(role_name, e)
+        failure_notify(msg)
+
 def bind_permission_boundary_user(iam_client, user_name, permission_boundary_arn):
     """
     Bind the permission boundary arn to the user.
@@ -449,6 +465,21 @@ def bind_permission_boundary_user(iam_client, user_name, permission_boundary_arn
               to exceptional {2}".format(permission_boundary_arn, user_name, e)
         failure_notify(msg)
 
+def delete_permission_boundary_user(iam_client, user_name):
+    """
+    Delete the permission boundary arn for IAM user.
+    """
+    try:
+        iam_client.delete_user_permissions_boundary(
+            UserName = user_name
+        )
+        print("Default permission boundary policy has been deleted for user {0}"
+              .format(user_name))
+    except Exception as e:
+        msg = "Failed to delete default permission boundary policy for user {0} due \
+              to exceptional {1}".format(user_name, e)
+        failure_notify(msg)
+
 def generate_policy_statement_sid(s3_object_key):
     """
     Generate an unique PolicyStatement ID for the inputted s3_object.
@@ -458,6 +489,8 @@ def generate_policy_statement_sid(s3_object_key):
     """
     sid_prefix = extract_sid_prefix(s3_object_key)
     sid_prefix_hash = blake2b_hash(sid_prefix)[:HASH_PREFIX_NUM]
+    print("The generated hash is {0} by s3 object key {1}".format(sid_prefix_hash, s3_object_key))
+
     return "%s" % (sid_prefix_hash)
 
 def create_policy_statement(s3_bucket_name, s3_object_key):
@@ -544,6 +577,26 @@ def assume_role(sts_client, account, context, service="iam"):
 
     return client
 
+def assume_role_resource(sts_client, account, context, service="iam"):
+    """
+    Assume to the target account.
+    """
+    assume_role_arn = "arn:" + get_aws_partition(context) + ":iam::" \
+                    + account + ":role/" + ORGANIZATION_ROLE
+
+    Credentials = sts_client.assume_role(
+        RoleArn=assume_role_arn,
+        RoleSessionName=account,
+        DurationSeconds=900)
+
+    client = boto3.resource(
+        service,
+        aws_access_key_id=Credentials['Credentials']['AccessKeyId'],
+        aws_secret_access_key=Credentials['Credentials']['SecretAccessKey'],
+        aws_session_token=Credentials['Credentials']['SessionToken'])
+
+    return client
+
 def delete_oldest_policy_versions(iam_client, policy_arn):
     """
     Delete the oldest non-default PolicyVersions until we can assure the success of a new PolicyVersion creation.
@@ -607,6 +660,51 @@ def process_permission_boundary_to_role(target_iam_client,
             except Exception as e:
                 failure_notify(e)
 
+def delete_permission_boundary_to_role(target_iam_client,
+                                        policy_arn,
+                                        account,
+                                        s3_object_key):
+    """
+    The main function to delete the permission boundary against the IAM roles
+    """
+
+    role_list = get_available_roles(target_iam_client)
+
+    for role in role_list:
+        print("Processing role {0}".format(role))
+        response = target_iam_client.get_role(RoleName=role)
+        role_permission_boundary_arn = ""
+
+        if "PermissionsBoundary" in response["Role"]:
+            role_permission_boundary_arn = response["Role"]["PermissionsBoundary"]["PermissionsBoundaryArn"]
+        if role_permission_boundary_arn:
+            if role_permission_boundary_arn == policy_arn:
+                delete_permission_boundary_role(target_iam_client, role)
+            else:
+                policy_reponse = target_iam_client.get_policy(PolicyArn=role_permission_boundary_arn)
+                default_version_id = policy_reponse["Policy"]["DefaultVersionId"]
+                target_policy_version = target_iam_client.get_policy_version(
+                    PolicyArn=role_permission_boundary_arn,
+                    VersionId=default_version_id
+                )
+
+                target_policy_version_document_json = target_policy_version["PolicyVersion"]["Document"]
+                consolidated_policy_json = delete_permission_boundary_arn(
+                                          target_policy=target_policy_version_document_json,
+                                          sid_prefix=generate_policy_statement_sid(s3_object_key))
+                delete_oldest_policy_versions(target_iam_client, role_permission_boundary_arn)
+                print("Setting it as the default policy version for {0}".format(role_permission_boundary_arn))
+                try:
+                    print("Creating policy version for policy arn {0}"
+                          .format(role_permission_boundary_arn))
+                    policy_version_resp = target_iam_client.create_policy_version(
+                        PolicyArn=role_permission_boundary_arn,
+                        PolicyDocument=json.dumps(consolidated_policy_json),
+                        SetAsDefault=True,
+                    )
+                except Exception as e:
+                    failure_notify(e)
+
 def process_permission_boundary_to_user(target_iam_client,
                                         policy_arn,
                                         account,
@@ -652,6 +750,50 @@ def process_permission_boundary_to_user(target_iam_client,
                 )
             except Exception as e:
                 failure_notify(e)
+
+def delete_permission_boundary_to_user(target_iam_client,
+                                        policy_arn,
+                                        account,
+                                        s3_object_key):
+    """
+    The main function to delete the permission boundary against the IAM roles
+    """
+    user_list = get_available_users(target_iam_client)
+
+    for user_name in user_list:
+        print("Deleting permission boundary for user {0}".format(user_name))
+        response = target_iam_client.get_user(UserName=user_name)
+        user_permission_boundary_arn = ""
+
+        if "PermissionsBoundary" in response["User"]:
+           user_permission_boundary_arn = response["User"]["PermissionsBoundary"]["PermissionsBoundaryArn"]
+        if user_permission_boundary_arn:
+            if user_permission_boundary_arn == policy_arn:
+                delete_permission_boundary_user(target_iam_client, user_name)
+            else:
+                policy_reponse = target_iam_client.get_policy(PolicyArn=user_permission_boundary_arn)
+                default_version_id = policy_reponse["Policy"]["DefaultVersionId"]
+                target_policy_version = target_iam_client.get_policy_version(
+                    PolicyArn=user_permission_boundary_arn,
+                    VersionId=default_version_id
+                )
+
+                target_policy_version_document_json = target_policy_version["PolicyVersion"]["Document"]
+                consolidated_policy_json = delete_permission_boundary_arn(
+                                          target_policy=target_policy_version_document_json,
+                                          sid_prefix=generate_policy_statement_sid(s3_object_key))
+                delete_oldest_policy_versions(target_iam_client, user_permission_boundary_arn)
+                print("Setting it as the default policy version for {0}".format(user_permission_boundary_arn))
+                try:
+                    print("Creating policy version for policy arn {0}"
+                          .format(user_permission_boundary_arn))
+                    policy_version_resp = target_iam_client.create_policy_version(
+                        PolicyArn=user_permission_boundary_arn,
+                        PolicyDocument=json.dumps(consolidated_policy_json),
+                        SetAsDefault=True,
+                    )
+                except Exception as e:
+                    failure_notify(e)
 
 def create_policy_in_account(policy_version_document_json, account, context, s3_object_key):
     """
@@ -704,6 +846,21 @@ def create_policy_in_account(policy_version_document_json, account, context, s3_
                                         render_policy_version_document_json,
                                         s3_object_key)
 
+def delete_policy_in_account(account, context, s3_object_key):
+    """
+    Delete the global permission boundary in the target account.
+    """
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+    target_iam_client = assume_role(sts_client, account, context)
+    policy_arn = "arn:" + get_aws_partition(context) + ":iam::" + account \
+            + ":policy/" + PERMISSION_BOUNDARY_NAME
+
+    delete_permission_boundary_to_user(target_iam_client,
+                                        policy_arn, account,
+                                        s3_object_key)
+    delete_permission_boundary_to_role(target_iam_client,
+                                        policy_arn, account,
+                                        s3_object_key)
 
 def consolidate_permission_boundary_arn(source_policy, target_policy, sid_prefix):
 
@@ -727,6 +884,23 @@ def consolidate_permission_boundary_arn(source_policy, target_policy, sid_prefix
         )
 
     return tmp_policy
+
+def delete_permission_boundary_arn(target_policy, sid_prefix):
+
+    tmp_policy = copy.deepcopy(target_policy)
+
+    for stmt in target_policy["Statement"]:
+        if (
+            "Sid" in stmt
+            and stmt["Sid"][0 : len(sid_prefix)]
+            == sid_prefix
+        ):
+            tmp_policy["Statement"].remove(stmt)
+
+    print("The consolidated policy json {0}".format(tmp_policy))
+
+    return tmp_policy
+
 
 def check_s3_object_exists(bucket_name, object_key):
     """
@@ -779,53 +953,177 @@ def create_event_rule_in_account(target_account_id, context):
         NamePrefix=ACCOUNT_EVENT_RULE_NAME,
         EventBusName=ACCOUNT_EVENT_BUS_NAME,
     )
-
+    event_rule_exists = False
     for rule in existing_rules["Rules"]:
         if rule["Name"] == ACCOUNT_EVENT_RULE_NAME:
             print("Event rule {0} was created in account {1}"
               .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
-            return
+            event_rule_exists = True
+            break
 
-    print("Event rule {0} not found in account {1}"
-          .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
-    try:
-        target_events_client.put_rule(
-            Name=ACCOUNT_EVENT_RULE_NAME,
-            EventPattern=json.dumps(ACCOUNT_EVENT_PATTERN),
-            State='ENABLED',
-            Description='Event rule for SCP Alternative Solution',
-            EventBusName=ACCOUNT_EVENT_BUS_NAME
+    if not event_rule_exists:
+        print("Event rule {0} not found in account {1}, creating..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+        try:
+            target_events_client.put_rule(
+                Name=ACCOUNT_EVENT_RULE_NAME,
+                EventPattern=json.dumps(ACCOUNT_EVENT_PATTERN),
+                State='ENABLED',
+                Description='Event rule for SCP Alternative Solution',
+                EventBusName=ACCOUNT_EVENT_BUS_NAME
+            )
+        except Exception as e:
+            msg = "Failed to create event rule {0} in account {1}"\
+                  .format(ACCOUNT_EVENT_RULE_NAME, target_account_id)
+            failure_notify(msg)
+
+    role_exists = False
+    roles_response = target_iam_client.list_roles()
+    role_list = roles_response['Roles']
+    for key in role_list:
+        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM role {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_exists = True
+            break
+
+    if not role_exists:
+        iam_role_response = target_iam_client.create_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+            AssumeRolePolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_TRUST_POLICY),
         )
-    except Exception as e:
-        msg = "Failed to create event rule {0} in account {1}"\
-              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id)
-        failure_notify(msg)
+    else:
+        iam_role_response = target_iam_client.get_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME
+        )
 
-    iam_policy_response = target_iam_client.create_policy(
-        PolicyName=ACCOUNT_EVENT_RULE_NAME,
-        PolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_POLICY),
-    )
+    policy_exists = False
+    policy_response = target_iam_client.list_policies(
+            Scope='Local',
+            PolicyUsageFilter='PermissionsPolicy',
+        )
+    policy_list = policy_response['Policies']
+    for key in policy_list:
+        if key["PolicyName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM policy {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            policy_exists = True
+            break
 
-    iam_role_response = target_iam_client.create_role(
-        RoleName=ACCOUNT_EVENT_RULE_NAME,
-        AssumeRolePolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_TRUST_POLICY),
-    )
+    if not policy_exists:
+        target_iam_client.create_policy(
+            PolicyName=ACCOUNT_EVENT_RULE_NAME,
+            PolicyDocument=json.dumps(ACCOUNT_EVENT_ROLE_POLICY),
+        )
 
-    target_iam_client.attach_role_policy(
-        RoleName=iam_role_response['Role']['RoleName'],
-        PolicyArn=iam_policy_response['Policy']['Arn']
-    )
+    role_policy_exists = False
+    role_policy_response = target_iam_client.list_attached_role_policies(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+        )
 
-    target_events_client.put_targets(
+    role_policy_list = role_policy_response['AttachedPolicies']
+    for key in role_policy_list:
+        if key["PolicyName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM policy {0} was created attached in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_policy_exists = True
+            break
+
+    if not role_policy_exists:
+        l_policy_arn = "arn:" + get_aws_partition(GLOBAL_CONTEXT) + ":iam::" + ACCOUNT_ID \
+                + ":policy/" + ACCOUNT_EVENT_RULE_NAME
+        target_iam_client.attach_role_policy(
+            RoleName=iam_role_response['Role']['RoleName'],
+            PolicyArn=l_policy_arn
+        )
+
+    target_exists = False
+    target_response = target_events_client.list_targets_by_rule(
         Rule=ACCOUNT_EVENT_RULE_NAME,
-        Targets=[
-            {
-                'Id': ACCOUNT_EVENT_RULE_NAME,
-    		    'Arn': SCP_EVENT_BUS_ARN,
-                'RoleArn': iam_role_response['Role']['Arn']
-            },
-    	]
     )
+    target_list = target_response['Targets']
+    for key in target_list:
+        if key["Id"] == ACCOUNT_EVENT_RULE_NAME:
+            print("Event target {0} was created in account {1}, skipping..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            target_exists = True
+            break
+
+    if not target_exists:
+        target_events_client.put_targets(
+            Rule=ACCOUNT_EVENT_RULE_NAME,
+            Targets=[
+                {
+                    'Id': ACCOUNT_EVENT_RULE_NAME,
+        		    'Arn': SCP_EVENT_BUS_ARN,
+                    'RoleArn': iam_role_response['Role']['Arn']
+                },
+        	]
+        )
+
+def delete_event_rule_in_account(target_account_id, context):
+    """
+    Delete event rule/event target/IAM role/IAM policy in the target account.
+    """
+    current_account_id = get_current_account_id(context)
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+    target_events_client = assume_role(sts_client, target_account_id, context, "events")
+    target_iam_client = assume_role(sts_client, target_account_id, context, "iam")
+
+    existing_rules = target_events_client.list_rules(
+        NamePrefix=ACCOUNT_EVENT_RULE_NAME,
+        EventBusName=ACCOUNT_EVENT_BUS_NAME,
+    )
+
+    rule_exists = False
+    for rule in existing_rules["Rules"]:
+        if rule["Name"] == ACCOUNT_EVENT_RULE_NAME:
+            print("Event rule {0} was created in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            rule_exists = True
+            break
+
+    if rule_exists:
+        print("Event rule {0} does exist in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+
+        target_events_client.remove_targets(
+            Rule=ACCOUNT_EVENT_RULE_NAME,
+            Ids=[ACCOUNT_EVENT_RULE_NAME],
+            Force=True
+        )
+
+        target_events_client.delete_rule(Name=ACCOUNT_EVENT_RULE_NAME)
+
+    # Detach policy from role
+    role_exists = False
+    roles_response = target_iam_client.list_roles()
+    role_list = roles_response['Roles']
+    for key in role_list:
+        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+            print("IAM role {0} was created in account {1}, deleting..."
+              .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
+            role_exists = True
+            break
+
+    if role_exists:
+        role_policy_response = target_iam_client.list_attached_role_policies(
+            RoleName=ACCOUNT_EVENT_RULE_NAME,
+        )
+
+        for policy in role_policy_response["AttachedPolicies"]:
+            target_iam_client.detach_role_policy(
+                PolicyArn=policy["PolicyArn"],
+                RoleName=ACCOUNT_EVENT_RULE_NAME
+            )
+
+            iam_policy_response = target_iam_client.delete_policy(
+                PolicyArn=policy["PolicyArn"]
+            )
+
+        iam_role_response = target_iam_client.delete_role(
+            RoleName=ACCOUNT_EVENT_RULE_NAME
+        )
 
 def get_current_account_arn(context):
     return get_account_arn(get_current_account_id(context), context)
@@ -959,6 +1257,20 @@ def update_item(account_id, key, value):
         failure_notify('Failed to write item {0} to {1}, detailed failure: {1}'
                        .format(value, account_id, e))
 
+def delete_item(account_id):
+    """
+    Delete the value of the key in dyanmodb table.
+    """
+    try:
+        dynamodb_table.delete_item(
+            Key={
+                'AccountId': account_id
+            }
+        )
+    except Exception as e:
+        failure_notify('Failed to delete item {0}, detailed failure: {1}'
+                       .format(account_id, e))
+
 def init_item(account_id, mgt_account_id, ou_id):
     """
     Init the account and write the account to dynamodb table.
@@ -1061,6 +1373,7 @@ def create_and_enable_scp_trail(target_account_id, context):
                     }
                 )
             print(bucket_name)
+
             target_s3_client.put_bucket_policy(Bucket=bucket_name,
                                                Policy=json.dumps(bucket_policy))
         except Exception as e:
@@ -1090,11 +1403,41 @@ def create_and_enable_scp_trail(target_account_id, context):
             .format(trail_bucket, e)
         failure_notify(msg)
 
+    return
+
+def delete_scp_trail(target_account_id, context):
+    """
+    Delete the CloudTrail for SCP.
+    """
+    current_account_id = get_current_account_id(context)
+    sts_client = master_acount_org_session(service="sts", mgt_account_id=MANAGEMENT_ACCOUNT_ID)
+
+    target_s3_resource = assume_role_resource(sts_client, target_account_id, context, "s3")
+    target_s3_client = assume_role(sts_client, target_account_id, context, "s3")
+    target_trail_client = assume_role(sts_client, target_account_id, context, "cloudtrail")
+
+    bucket_name = ACCOUNT_BUCKET_PREFIX + '-' + target_account_id
+    trail_name = ACCOUNT_TRAIL_NAME
+
+    try:
+        target_s3_client.head_bucket(Bucket=bucket_name)
+        target_s3_resource_client = target_s3_resource.Bucket(bucket_name)
+        target_s3_resource_client.objects.all().delete()
+        target_s3_resource_client.delete()
+    except Exception as e:
+        print("The bucket was not created, Hit error {0}".format(e))
+
+    # Delete CloudTrail
+    response_trail_list = target_trail_client.list_trails()
+    for trail in response_trail_list['Trails']:
+        if (('Name' in trail) and (trail['Name'] == trail_name)):
+            print("CloudTrail {0} was created, deleting....".format(trail_name))
+            target_trail_client.delete_trail(Name=trail_name)
+            return
+
 def send_response(rs, rd):
     """
     Packages response and send signals to CloudFormation
-    :param e: The event given to this Lambda function
-    :param c: Context object, as above
     :param rs: Returned status to be sent back to CFN
     :param rd: Returned data to be sent back to CFN
     """
@@ -1119,7 +1462,70 @@ def send_response(rs, rd):
     r = urlopen(req)
     print("Status message: {} {}".format(r.msg, r.getcode()))
 
-def main(event, context):
+############################################################
+#                 SIGNAL HANDLER FUNCTIONS                 #
+############################################################
+
+def create():
+    """
+    Enroll the target AWS account to the framework:
+    - Create account metadata in dynamodb.
+    - Create required resources in the target account to monitor IAM activity.
+    - Create and attach the IAM permission boundary policy for SCP to IAM roles.
+    """
+    bucket_name = S3_BUCKET_NAME
+    init_item(ACCOUNT_ID, MANAGEMENT_ACCOUNT_ID, OU_ID)
+    for object_key in get_valid_object_key():
+        append_item_to_list(ACCOUNT_ID, 'ScpPolicyPathList', object_key)
+        policy_version_document_json = create_policy_statement(bucket_name, object_key)
+        create_policy_in_account(policy_version_document_json, ACCOUNT_ID, GLOBAL_CONTEXT, object_key)
+        update_item(ACCOUNT_ID, 'ScpUpdateTime', get_current_time())
+
+    if str2bool(CREATE_SCP_TRAIL):
+        create_and_enable_scp_trail(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    create_event_rule_in_account(ACCOUNT_ID, GLOBAL_CONTEXT)
+    update_resource_policy(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    return
+
+def delete():
+    """
+    Enroll the target AWS account to the framework:
+    - Delete required resources in the target account to monitor IAM activity.
+    - Delete account metadata in dynamodb.
+    - Dettach the IAM permission boundary policy for SCP to IAM roles.
+    """
+    for object_key in get_valid_object_key():
+        delete_policy_in_account(ACCOUNT_ID, GLOBAL_CONTEXT, object_key)
+
+    if str2bool(CREATE_SCP_TRAIL):
+        delete_scp_trail(ACCOUNT_ID, GLOBAL_CONTEXT)
+
+    delete_event_rule_in_account(ACCOUNT_ID, GLOBAL_CONTEXT)
+    delete_item(ACCOUNT_ID)
+
+    return
+
+def update():
+    """
+    Re-enroll account with updated parameters.
+    """
+    delete()
+    create()
+
+    return
+
+############################################################
+#                LAMBDA FUNCTION HANDLER                   #
+############################################################
+# IMPORTANT: The Lambda function will be called whenever   #
+# changes are made to the stack. Thus, ensure that the     #
+# signals are handled by your Lambda function correctly,   #
+# or the stack could get stuck in the DELETE_FAILED state  #
+############################################################
+
+def main(event, context, reply=True):
     """
     Main handler of the lambda function which tries to create or update the
     permission boundary policy.
@@ -1128,21 +1534,38 @@ def main(event, context):
     GLOBAL_EVENT = event
     GLOBAL_CONTEXT = context
 
+    request_type = event['RequestType']
+
     print("Lambda Event: {0}".format(event))
     if ACCOUNT_ID == get_current_account_id(context):
         failure_notify("Account register for the security account {0} is not allowed".format(ACCOUNT_ID))
 
-    bucket_name = S3_BUCKET_NAME
-    init_item(ACCOUNT_ID, MANAGEMENT_ACCOUNT_ID, OU_ID)
-    for object_key in get_valid_object_key():
-        append_item_to_list(ACCOUNT_ID, 'ScpPolicyPathList', object_key)
-        policy_version_document_json = create_policy_statement(bucket_name, object_key)
-        create_policy_in_account(policy_version_document_json, ACCOUNT_ID, context, object_key)
-        update_item(ACCOUNT_ID, 'ScpUpdateTime', get_current_time())
-
-    if str2bool(CREATE_SCP_TRAIL):
-        create_and_enable_scp_trail(ACCOUNT_ID, context)
-
-    create_event_rule_in_account(ACCOUNT_ID, context)
-    update_resource_policy(ACCOUNT_ID, context)
-    send_response("SUCCESS", { "Message": "Account register successfully" })
+    try:
+        if request_type == 'Create':
+            create()
+            if reply == True:
+                send_response("SUCCESS", {"Message": "Created"})
+        elif request_type == 'Update':
+            update()
+            if reply == True:
+                send_response("SUCCESS",
+                          {"Message": "Updated"})
+        elif request_type == 'Delete':
+            delete()
+            if reply == True:
+                send_response("SUCCESS",
+                          {"Message": "Deleted"})
+        else:
+            if reply == True:
+                send_response("FAILED",
+                          {"Message": "Unexpected"})
+    except Exception as ex:
+        print(ex)
+        traceback.print_tb(ex.__traceback__)
+        if reply == True:
+            send_response(
+                "FAILED",
+                {
+                    "Message": "Exception"
+                }
+            )

@@ -688,6 +688,7 @@ Resources:
 
   # DynamoDB table
   ScpTable:
+    DeletionPolicy: Retain
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
