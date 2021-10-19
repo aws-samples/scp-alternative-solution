@@ -35,7 +35,9 @@ Before diving into the architecture, let’s learn more about policy evaluation 
 In an AWS account where SCP is applied, the above flow chart provides details about [Determining whether a request is allowed or denied within an account
 ](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html#policy-eval-denyallow).
 
-![policy_cross-account-eval-simple.png](docs/images/policy_cross-account-eval-simple.png)
+<p align="center">
+  <img src="docs/images/policy_cross-account-eval-simple.png">
+</p>
 
 In a multi account environment, you'll also need to consider [Cross-account policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic-cross-account.html) as the figure above.
 
