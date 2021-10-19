@@ -2,7 +2,7 @@
 
 AWS Organizations provides central governance and management for multiple accounts. Central security administrators use [service control policies (SCPs)](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html) with AWS Organizations to establish controls that all IAM principals (users and roles) adhere to.
 
-However Service Control Policies (SCPs) feature in AWS Organizations is not available in the China regions (BJS and ZHY) yet as of Sep 2021.
+However, Service Control Policies (SCPs) feature in AWS Organizations is not available in the China regions (BJS and ZHY) yet as time of writing.
 
 This repository is part of [the Chinese blog post](https://aws.amazon.com/cn/blogs/china/scp-alternative-based-on-iam-permission-boundaries/) that guides users through implementing a SCP Alternative Solution for China Region from scratch.
 
@@ -28,16 +28,22 @@ Table of Contents
 
 ## Rationale
 
-Before we dive into the architecture, let’s learn more about policy evaluation logic in AWS.
+Before diving into the architecture, let’s learn more about policy evaluation logic in AWS.
 
 ![PolicyEvaluationHorizontal.png](docs/images/PolicyEvaluationHorizontal.png)
 
 In an AWS account where SCP is applied, the above flow chart provides details about [Determining whether a request is allowed or denied within an account
-](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html#policy-eval-denyallow). In a multi account environment, you'll also need to consider [Cross-account policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic-cross-account.html).
+](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html#policy-eval-denyallow).
 
-Overral, SCPs are similar to IAM boundaries, in that they define the maximum set of actions that can be allowed. The difference is that SCPs applies to principals of accounts, and IAM permission boundary applies to principals of IAM users and roles.
+<p align="center">
+  <img src="docs/images/policy_cross-account-eval-simple.png">
+</p>
 
-Based on the rationale above, the SCP alternative solution is to implement an automated way to ensure the "SCP policies" are applied to all IAM user/roles within the account by IAM permission boundary.
+In a multi account environment, you'll also need to consider [Cross-account policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic-cross-account.html) as the figure above.
+
+Based on the evaluation logic in AWS multi-account environment, SCPs are similar to IAM boundaries, in that they define the maximum set of actions that can be allowed. The difference is that SCPs applies to principals of accounts, and IAM permission boundary applies to principals of IAM users and roles.
+
+Based on the rationale above, the SCP alternative solution is to implement an automated pipeline to ensure the "SCP policies" are applied to all IAM user/roles within the target account by IAM permission boundary policy.
 
 ## Architecture Overview
 
@@ -47,15 +53,15 @@ The purpose of the design is to simulate the native SCP as possible as we can, a
 
 The architecture is based on AWS native services, the core AWS services used are:
 
-* *S3 bucket*: used to store SCP custom policies. In native SCP provided by AWS Organizations, users can directly edit and update the SCP policy file through the console. In this alternative design, the SCP policy files are updated in a dedicated S3 bucket of the security account, and the corresponding event notification is configured for the bucket to detect any changes for the updates of the SCP policies.
-* *SCP Service Catalog*: Provides a friendly user interface for administrators to manually register accounts that need to apply the SCP policies. In native SCP provided by AWS Organizations, by using the account structure created in AWS Organizations, it can apply SCP policy on the account or organizational unit level. In this alternative design, all accounts that need to apply the SCP policies need to manually register and initilized from this SCP Service Catalog Product.
-* *Event Rule and CloudTrail*: Continuously monitor the API activities of newly created IAM users or roles in the account, and send the events to the Lambda of the security account for further processing, and apply the IAM Permission Boundary to the newly created IAM users and roles. In the native SCP provided by AWS Organizations, the SCP policy is applied to the entire account, and any newly created IAM users and roles will automatically apply the SCP policy. Since this solution is based on IAM Permission Boundary, whenever a new user or role is created, it's required to ensure that the newly created user or role also applies the IAM Permission Boundary.
+* **S3 bucket** - It's used to store SCP custom policies. In native SCP provided by AWS Organizations, users can directly edit and update the SCP policy file through the console. In this alternative design, the SCP policy files are uploaded to a dedicated S3 bucket of the security account, and the corresponding event notification is configured for the bucket to detect any changes for the updates of the SCP policies.
+* **SCP Service Catalog** - It provides a friendly user interface for administrators to manually register accounts that need to apply the SCP policies. In native SCP provided by AWS Organizations, by using the account structure created in AWS Organizations, it can apply SCP policy on the account or organizational unit level. In this alternative design, all accounts that need to apply the SCP policies need to manually register and initilized from this SCP Service Catalog Product.
+* **Event Rule and CloudTrail** - It continuously monitors the API activities of newly created IAM users or roles in the account, and send the events to the Lambda of the security account for further processing, and apply the IAM Permission Boundary to the newly created IAM users and roles. In the native SCP provided by AWS Organizations, the SCP policy is applied to the entire account, and any newly created IAM users and roles will automatically apply the SCP policy. Since this solution is based on IAM Permission Boundary, whenever a new user or role is created, it's required to ensure that the newly created user or role also applies the IAM Permission Boundary.
 * **Lambda functions**:
-    * *scp-account-register*: used to register and initialize the account that needs to be apply the SCP policy, and store the account information in DynamoDB for other Lambda functions to query account related info.
-    * *scp-iam-event-dispatcher*: Used to receive events of newly created IAM users and roles in registered accounts, and apply the corresponding IAM Permission Boundary to the newly created IAM users or roles
-    * *scp-s3-event-dispatcher*: Used to receive the update event of the policy file in the S3 bucket, and automatically update the IAM permission boundary policy accroding to the updated SCP policy file in the registered accounts.
-* *SNS*: Used to receive information about the failure of SCP policy creation and binding. The security administrator can opt-in to subscribe to the SNS Topic to get timely failure notifications
-* *DynamoDB*: It is used to store the registered account meta-information for query. The format of the stored information is as follows:
+    * *scp-account-register* - It's used to register and initialize the account that needs to be apply the SCP policy, and store the account information in DynamoDB for other Lambda functions to query account related info.
+    * *scp-iam-event-dispatcher* - It's used to receive events of newly created IAM users and roles in registered accounts, and apply the corresponding IAM Permission Boundary to the newly created IAM users or roles
+    * *scp-s3-event-dispatcher* - It's used to receive the update event of the policy file in the S3 bucket, and automatically update the IAM permission boundary policy accroding to the updated SCP policy file in the registered accounts.
+* *SNS* - It's used to receive information about the failure of SCP policy creation and binding. The security administrator can opt-in to subscribe to the SNS Topic to get timely failure notifications
+* *DynamoDB* - It is used to store the registered account meta-information for query. The format of the stored information is as follows:
 
 |AccountId|MgtId|OuId|ScpCustomPolicyList (L)|ScpPolicyPathList (L)|ScpUpdateTime (S)|
 | --- | ----------- | --- | ----------- | --- | ----------- |
@@ -70,9 +76,11 @@ The infrastructure required in this solution can be deployed by the CloudFormati
 
 ### Prerequisites
 
-* The solution is target on AWS multi-account environment, the security account and management account is supposed to exist.
-* It's able to access to member accounts from the management account. This is the default capability for the accounts created via AWS Organizations. By default the role used to assume to member account is `OrganizationAccountAccessRole`, you can also specify arbitary IAM role name in the deployments.
-* The security account can assume to the management account, further perform the role-assuming described above to member accounts.
+Prior to deploying the solution to your environment, it is necessary to have the appropriate prerequisites. Verify that your AWS multi-account environment has the supported prerequisites before starting the installation.
+
+*	The solution is target on AWS multi-account environment, so the security account and management account is supposed to exist.
+*	It needs the ability to access to member accounts from the management account. An IAM role OrganizationAccountAccessRole will be created by default to allow management account to assume to member accounts if the member accounts created via AWS Organizations. The role is required to be created manually if it doesn’t exist. The role name can also be customized during the deployment if it’s not the default role name OrganizationAccountAccessRole in some cases.
+*	The security account can assume the role in the management account, with the assumed role, it can assume to the member accounts. The deployment steps below will walk you through to deploy the required IAM roles for the capability.
 
 ### Build Artifacts
 
@@ -101,9 +109,9 @@ scp-iam-event-dispatcher.zip              scp-service-catalog-product-template.y
 
 Log in to the management account, select the CloudFormation template file [010-create-iam-role-in-master-account.yaml](cloudformation/010-create-iam-role-in-master-account.yaml), and create an IAM role that allows the security account to assume to:
 
-* **ManagementAccountAccessRoleName**: - The name of the role deployed in the management account, used to allow the security account to assume to the management account, ensure that the parameters deployed under the security account are consistent
-* **OrganizationAccessRoleName**: - The name of the role deployed in all member accounts, used to allow the management account Assume to each member account, ensure that the parameters deployed under the security account are consistent
-* **SecurityAccountID**: The AWS Security Account ID
+* **ManagementAccountAccessRoleName** - The name of the role deployed in the management account, used to allow the security account to assume to the management account, ensure that the parameters deployed under the security account are consistent
+* **OrganizationAccessRoleName** - The name of the role deployed in all member accounts, used to allow the management account Assume to each member account, ensure that the parameters deployed under the security account are consistent
+* **SecurityAccountID** - The AWS Security Account ID
 
 ### Deployment for Security Account
 
@@ -115,10 +123,10 @@ Login to Security account and perform the following deployment:
         * Organization unit level file: `<OrganizationUnit-ID>.json`
 * The assets file has been created in step __Build Artifacts__. Upload all the files in the assets directory to the root directory of the above S3 bucket.
 * Select the CloudFormation template file [030-create-scp-infra-in-security-account.yaml](cloudformation/030-create-scp-infra-in-security-account.yaml) to create the required infrastructure.
-    * **ManagementAccountID**: The AWS management Account ID
-    * **ManagementAccountAccessRoleName**: The name of the role deployed in the management account, used to allow the security account to assume to the management account, ensure that the parameters deployed under the management account are consistent
-    * **OrganizationAccessRoleName**: The name of the role deployed in all member accounts, used to allow the management account to assume to each member account, ensure that the parameters deployed under the management account are consistent
-    * **SCPCatalogAdministrator**: The name of the IAM role/user deployed under the security account, this role/user will be the administrator of the Service Catalog Product of the SCP Account Register
+    * **ManagementAccountID** - The AWS management Account ID
+    * **ManagementAccountAccessRoleName** - The name of the role deployed in the management account, used to allow the security account to assume to the management account, ensure that the parameters deployed under the management account are consistent
+    * **OrganizationAccessRoleName** - The name of the role deployed in all member accounts, used to allow the management account to assume to each member account, ensure that the parameters deployed under the management account are consistent
+    * **SCPCatalogAdministrator** - The name of the IAM role/user deployed under the security account, this role/user will be the administrator of the Service Catalog Product of the SCP Account Register
         * IAM Role: e.g role/Operation
         * IAM User: e.g user/Alice
 
@@ -133,7 +141,7 @@ After the deployments, all required infra resources for the solutiion are create
 
 ### Use Case 1: Initialize S3 bucket for the SCP polices files
 
-With the alternative solution, the SCP policy are defined in a json file and stored in S3 bucket. The SCP policy file for the Organization Unit or Account must exist in advance.
+With the alternative solution, the SCP policy is defined in a json file and stored in S3 bucket. The SCP policy file for the Organization Unit or Account must exist in advance.
 
 * Login to security account, a dedicated S3 bucket should created to store the "SCP polices". The naming convention is `scp-alt-<Security-Account-ID>`.
 * Rename the SCP policy file with the required naming convention (E.g Rename [010-region-beijing-only.json](sample-scp-policies/010-region-beijing-only.json) to `ou-47kj-8dquliyv.json` for demo purpose)
@@ -146,7 +154,7 @@ With the alternative solution, the SCP policy are defined in a json file and sto
 
 ### Use Case 2: Initialize the member account to be managed by SCP Alternative solution
 
-For any AWS accounts which need to be managed by the alternative solution, it's required to be registered and initilized via the SCP Service catalog product first.
+For any AWS accounts which needs to be managed by the alternative solution, it's required to be registered and initilized via the SCP Service catalog product first.
 
 > Make sure the SCP policy file for the account or the organization unit is already uploaded to the S3 bucket above.
 
@@ -156,7 +164,7 @@ For any AWS accounts which need to be managed by the alternative solution, it's 
   - Input the AWS Account id to be registered, e.g: `0123456789012`
   - Input the AWS Organization Unit ID for the account, e.g: `ou-47kj-8dquliyv`
 * Wait the product to be created successfully
-> Behind the sence, the lambda function *scp-account-register* deployed in security account will be triggered by the CloudFormation stack.
+> Behind the sense, the lambda function *scp-account-register* deployed in security account will be triggered by the CloudFormation stack.
 * Login to the registered account by using the administrator IAM role (`OrganizationAccountAccessRole` by default), an IAM policy `scp-enforce-policy` is created and associated to all IAM users/roles in the member account except the administrator IAM role.
 * Login to the registered account by using non-administrator IAM entity, check if the deny actions defined in the SCP policy file works in the account.
   - For the [test SCP test policy](sample-scp-policies/010-region-beijing-only.json), it will be like:
@@ -168,7 +176,7 @@ In case the actions in SCP policy need to be updated, follow the instructions to
 
 * Follow the [SCP policy syntax](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_syntax.html) to update the target SCP policy file (E.g Rename [020-deny-all-S3-actions.json](sample-scp-policies/020-deny-all-S3-actions.json) to `ou-47kj-8dquliyv.json` for demo purpose)
 * Login to security account, upload the updated SCP policy file to S3 bucket under folder `permission-boundary-policy` (Overwrite the existing file directly if it already exists.)
-> Behind the sence, the lambda function *scp-iam-event-dispatcher* deployed in security account will be triggered by the object update event configured in the S3 bucket.
+> Behind the sense, the lambda function *scp-iam-event-dispatcher* deployed in security account will be triggered by the object update event configured in the S3 bucket.
 * Login to the registered account by using non-administrator IAM entity, check if the updated actions defined in the SCP policy file are updated automatically in the member account.
   - For the [test SCP test policy](sample-scp-policies/020-deny-all-S3-actions.json), it will be like:
 ![010-deny-s3-screenshot.png](docs/images/010-deny-s3-screenshot.png)
@@ -180,14 +188,14 @@ In many case that the user should have the ability to create new IAM user or rol
 The steps below demostrate how the newly created IAM user/role is retricted by IAM permission boundary policy.
 
 * Register the account via Service Catalog Product as described above.
-* Continuously check the confguration of the IAM permission boundary for this new role/user.
-> Behind the sence, the event rule deployed in this account captures the IAM activity, and trigger the lambda function *scp-iam-event-dispatcher* deployed in security account.
-* The IAM role/user attaches the IAM permission boundary policy automatically after successful lambda execution.
+* Continuously check the confguration of the IAM permission boundary for this new IAM role/user.
+> Behind the sense, the event rule deployed in this account captures the IAM activity, and trigger the lambda function *scp-iam-event-dispatcher* deployed in security account.
+* The IAM role/user attaches the IAM permission boundary policy automatically after lambda execution.
 ![011-newly-created-iam-role.png](docs/images/011-newly-created-iam-role.png)
 
 ### Use Case 5: Subscribe the failures for lambda execution
 
-In the case (the size of the policy exceeds limit 6,144 characters), the execution of the lambda function is failed. The security administrators need to get notified as soon as possible to mitigate the issue.
+In the case (E.g: the size of the policy exceeds limit 6,144 characters), the execution of the lambda function is failed. The security administrators need to get notified as soon as possible to mitigate the issue.
 
 A dedicated SNS topic is created in the account, the security administrators can opt-in subscribe the failures events.
 
@@ -235,7 +243,8 @@ This is a SCP workaround solution by using AWS IAM's permission boundary, the us
             "arn:aws-cn:iam::<Target-AWS-Account-ID>:policy/scp-enforce-policy",
             "arn:aws-cn:cloudtrail:cn-north-1:<Target-AWS-Account-ID>:trail/scp-trail",
             "arn:aws-cn:s3:::scp-trail-bucket-<Target-AWS-Account-ID>",
-            "arn:aws-cn:events:cn-north-1::rule/scp-event-rule"
+            "arn:aws-cn:events:cn-north-1:<Target-AWS-Account-ID>:rule/scp-event-rule",
+            "arn:aws-cn:iam::<Target-AWS-Account-ID>:role/<Protected-IAM-Role>"
         ],
         "Condition": {
             "ArnNotLike": {
@@ -244,14 +253,16 @@ This is a SCP workaround solution by using AWS IAM's permission boundary, the us
         }
     }
 ```
-4. The core resources in the solution are deployed in security account, it's crucial to ensure the actions executed in the lambda functions won't be affected by attached IAM permission boundary policy. By default it's not allowed to register the security account into the SCP service catalog.
-5. During the creation of the IAM permission boundary for the registered accounts, it's required to assume to the registered accounts from the master accounts to manage the IAM permission boundary policy. To avoid the permission issues caused by the attached IAM permission boundary policy, the IAM admin role (`OrganizationAccountAccessRole` by default) is reserved to not attach any IAM permission boundary policies. The user can specify arbitary role name by CloudFormation parameter `OrganizationAccessRoleName` during the deployment.
+4. The core resources in the solution are deployed in security account, it's crucial to ensure the actions executed in the lambda functions won't be affected by attached IAM permission boundary policy. Therefore by default it's not allowed to register the security account into the SCP service catalog.
+5. During the creation of the IAM permission boundary for the registered accounts, it's required to assume to the registered accounts from the master accounts to manage the IAM permission boundary policy. To avoid the permission issues caused by the attached IAM permission boundary policy, the IAM admin role (`OrganizationAccountAccessRole` by default) is reserved to not attach any IAM permission boundary policies. The user can specify custom role name by CloudFormation parameter `OrganizationAccessRoleName` during the deployment.
 6. Since the solution is based on IAM Permission Boundary, the allow actions are needed in the SCP policy files to have effective permissions. Details please see [Evaluating effective permissions with boundaries](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html#access_policies_boundaries-eval-logic).
 > In most of the cases, the allow all actions should be given as defined in [the example policy](https://github.com/aws-samples/scp-alternative-solution/blob/main/sample-scp-policies/010-region-beijing-only.json#L4-L9).
 
 ## Recommendation
 
-As the services and features in AWS China regions are moving very quickly, it's highly recommended to move to native SCP feature once it's available in AWS China regions.
+1. As the services and features in AWS China regions are moving very quickly, it's highly recommended to move to native SCP feature once it's available in AWS China regions.
+1. It’s recommended to manage the SCP policies files in SCM and managed by CICD to avoid human errors.
+1. The SCP policy is supposed to be tested first in non-prod environment before moving to production according to the best practice.
 
 ## License
 

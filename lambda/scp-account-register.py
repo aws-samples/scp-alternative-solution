@@ -89,7 +89,8 @@ SCP_ENFORCE_POLICY = [
             "arn:aws-cn:iam::<ACCOUNT_ID>:policy/{0}".format(PERMISSION_BOUNDARY_NAME),
             "arn:aws-cn:cloudtrail:cn-north-1:<ACCOUNT_ID>:trail/{0}".format(ACCOUNT_TRAIL_NAME),
             "arn:aws-cn:s3:::{0}-<ACCOUNT_ID>".format(ACCOUNT_BUCKET_PREFIX),
-            "arn:aws-cn:events:cn-north-1:<ACCOUNT_ID>:rule/{0}".format(ACCOUNT_EVENT_RULE_NAME)
+            "arn:aws-cn:events:cn-north-1:<ACCOUNT_ID>:rule/{0}".format(ACCOUNT_EVENT_RULE_NAME),
+            "arn:aws-cn:iam::<ACCOUNT_ID>:role/{0}".format(ORGANIZATION_ROLE)
         ],
         "Condition": {
             "ArnNotLike": {
