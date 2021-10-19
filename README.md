@@ -241,7 +241,8 @@ This is a SCP workaround solution by using AWS IAM's permission boundary, the us
             "arn:aws-cn:iam::<Target-AWS-Account-ID>:policy/scp-enforce-policy",
             "arn:aws-cn:cloudtrail:cn-north-1:<Target-AWS-Account-ID>:trail/scp-trail",
             "arn:aws-cn:s3:::scp-trail-bucket-<Target-AWS-Account-ID>",
-            "arn:aws-cn:events:cn-north-1:<Target-AWS-Account-ID>:rule/scp-event-rule"
+            "arn:aws-cn:events:cn-north-1:<Target-AWS-Account-ID>:rule/scp-event-rule",
+            "arn:aws-cn:iam::<Target-AWS-Account-ID>:role/<Protected-IAM-Role>"
         ],
         "Condition": {
             "ArnNotLike": {
