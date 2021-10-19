@@ -1538,8 +1538,9 @@ def main(event, context, reply=True):
     request_type = event['RequestType']
 
     print("Lambda Event: {0}".format(event))
-    if ACCOUNT_ID == get_current_account_id(context):
-        failure_notify("Account register for the security account {0} is not allowed".format(ACCOUNT_ID))
+    if ACCOUNT_ID == get_current_account_id(context) or ACCOUNT_ID == MANAGEMENT_ACCOUNT_ID:
+        failure_notify("Account register for the security account {0} or management account {1} is not allowed"
+                       .format(ACCOUNT_ID, MANAGEMENT_ACCOUNT_ID))
 
     try:
         if request_type == 'Create':
