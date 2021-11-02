@@ -138,6 +138,16 @@ Resources:
               Action:
                 - sts:AssumeRole
               Resource: !Sub 'arn:${AWS::Partition}:iam::{{resolve:ssm:/scp/management-account-id}}:role/{{resolve:ssm:/scp/management-account-access-role}}'
+        - PolicyName: allowDecryptKMS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Decrypt"
+                - "kms:Encrypt"
+                - "kms:GenerateDataKey"
+              Resource: "*"
 
   TriggerLambda:
     Type: "Custom::TriggerLambda"
