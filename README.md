@@ -6,6 +6,10 @@ However, Service Control Policies (SCPs) feature in AWS Organizations is not ava
 
 This repository is part of [the Chinese blog post](https://aws.amazon.com/cn/blogs/china/scp-alternative-based-on-iam-permission-boundaries/) that guides users through implementing a SCP Alternative Solution for China Region from scratch.
 
+## ⚠️ Warning
+
+Please read the [Limitation](#limitation) about the solution before deploying to your production environment.
+
 Table of Contents
 =================
 
@@ -69,9 +73,6 @@ The architecture is based on AWS native services, the core AWS services used are
 
 ## Deployment
 
-<details>
-<summary>Click me to expand</summary>
-
 The infrastructure required in this solution can be deployed by the CloudFormation templates.
 
 ### Prerequisites
@@ -127,12 +128,7 @@ Login to Security account and perform the following deployment:
         * IAM Role: e.g role/Operation
         * IAM User: e.g user/Alice
 
-</details>
-
 ## User Guide
-
-<details>
-<summary>Click me to expand</summary>
 
 After the deployments, all required infra resources for the solutiion are created successfully. Follow the instructions below to manage the "SCP policies" in the alternative solution.
 
@@ -208,8 +204,6 @@ This is for the case that it needs to move to native SCP with SCP feature is nat
 * Terminate all provisioned products for account register created via step [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
 * Terminate the CloudFormation Stacks created in step [Deployment for Security Account](#deployment-for-security-account)
 * Terminate the CloudFormation Stacks created in stesp [Deployment for Management Account](#deployment-for-management-account)
-
-</details>
 
 ## Limitation
 
