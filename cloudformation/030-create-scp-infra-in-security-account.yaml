@@ -256,7 +256,6 @@ Resources:
   # s3 -> sqs -> lambda
   ScpS3Bucket:
     DependsOn: SCPS3EventDispatcherSQSQueuePolicy
-    DeletionPolicy: Retain
     Type: 'AWS::S3::Bucket'
     Properties:
       BucketName: !Sub '${Prefix}-${AWS::AccountId}'
@@ -688,7 +687,6 @@ Resources:
 
   # DynamoDB table
   ScpTable:
-    DeletionPolicy: Retain
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
