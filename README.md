@@ -204,6 +204,7 @@ This is for the case that it needs to move to native SCP with SCP feature is nat
 > Note: The SCP syntax is exactly the same between SCP Alternative Solution and Native SCP. You don't need any modifications on the "SCP Policies" while moving to native SCP.
 * Terminate all provisioned products for account register created via step [Use Case 2: Initialize the member account to be managed by SCP Alternative solution](#use-case-2-initialize-the-member-account-to-be-managed-by-scp-alternative-solution)
 * Terminate the CloudFormation Stacks created in step [Deployment for Security Account](#deployment-for-security-account)
+> Note: The dedicated S3 bucket scp-alt-<Security-Account-ID> needs to be deleted manually.
 * Terminate the CloudFormation Stacks created in stesp [Deployment for Management Account](#deployment-for-management-account)
 
 ## Limitation
