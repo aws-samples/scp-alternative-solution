@@ -28,6 +28,7 @@ Table of Contents
    * [Use Case 6: Move to native SCP](#use-case-6-move-to-native-scp)
 * [Limitation](#limitation)
 * [Recommendation](#recommendation)
+* [Review and Possible Errors](#review-and-possible-errors)
 * [License](#license)
 
 ## Rationale
@@ -254,6 +255,12 @@ This is a SCP workaround solution by using AWS IAM's permission boundary, the us
 1. As the services and features in AWS China regions are moving very quickly, it's highly recommended to move to native SCP feature once it's available in AWS China regions.
 1. It’s recommended to manage the SCP policies files in SCM and managed by CICD to avoid human errors.
 1. The SCP policy is supposed to be tested first in non-prod environment before moving to production according to the best practice.
+
+## Review and Possible Errors
+
+| Message in logs                                              | Reasoning                                                    | Outcome |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------- |
+| Resource not found. (Service: AWSServiceCatalog; Status Code: 400; Error Code:  ResourceNotFoundException; Request ID:  38b658c5-24c3-4b52-8908-6a831a4f1458; Proxy: null) | It would randomly fails while creating the service catalog from CloudFormation. | Re-try  |
 
 ## License
 
