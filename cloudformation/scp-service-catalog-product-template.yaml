@@ -1,27 +1,28 @@
+---
 AWSTemplateFormatVersion: 2010-09-09
 Description: SCP account register cloudformation template.
 Metadata:
-  "AWS::CloudFormation::Interface":
+  AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
           default: Parameters for the new created account
         Parameters:
           - MemberAccountID
           - OrganizationUnitID
-
+          - CreateCloudTrail
 Parameters:
   MemberAccountID:
     Description: "Enter Member Account ID to apply the SCP policy."
     Type: String
-    AllowedPattern: ".+"
-    ConstraintDescription: "Account ID"
+    AllowedPattern: (\d{12}|^$)
+    ConstraintDescription: Must be a valid AWS account ID.
   OrganizationUnitID:
-    Description: "AWS Organization Unit ID"
+    Description: "AWS Organization Unit ID of the Member Account (Please ensure <OrganizationUnitID>.json does exist in the dedicated S3 bucket for SCP)"
     Type: String
     AllowedPattern: ".+"
     ConstraintDescription: "Enter the AWS Organization Unit ID of the Member Account"
   CreateCloudTrail:
-    Description: "Create dedicated CloudTrail in the member account to capture the IAM events."
+    Description: "The option to create dedicated CloudTrail in the member account to capture the IAM events."
     Type: String
     AllowedValues:
       - yes
@@ -34,7 +35,7 @@ Resources:
     Properties:
       Handler: "scp-account-register.main"
       Runtime: "python3.6"
-      Role: !GetAtt LambdaExecuteRole.Arn
+      Role: "{{resolve:ssm:/scp/scp-account-register-role-arn}}"
       Timeout: 900
       TracingConfig:
         Mode: "Active"
@@ -53,108 +54,11 @@ Resources:
           "SCP_EVENT_RULE_ARN": "{{resolve:ssm:/scp/event-rule-arn}}"
           "S3_BUCKET_NAME": "{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}"
           "ORGANIZATION_ROLE": "{{resolve:ssm:/scp/organization-access-role-name}}"
+          "WHITELIST_ROLE_NAME": "{{resolve:ssm:/scp/whitelist-role-name-list}}"
           "PERMISSION_BOUNDARY_NAME": "{{resolve:ssm:/scp/permission-boundary-name}}"
           "READ_POLICY_STATEMENT_SID": "{{resolve:ssm:/scp/read-policy-statement-id}}"
           "S3_OBJECT_FOLDER": "{{resolve:ssm:/scp/s3-object-folder}}"
           "MANAGEMENT_ACCOUNT_ACCESS_ROLE": "{{resolve:ssm:/scp/management-account-access-role}}"
-  LambdaExecuteRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          Effect: "Allow"
-          Principal:
-            Service:
-              - "lambda.amazonaws.com"
-          Action:
-            - "sts:AssumeRole"
-      Path: "/"
-      Policies:
-        - PolicyName: allowLambdaLogs
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-              - logs:*
-              Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
-        - PolicyName: allowDynamodb
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-              - dynamodb:GetItem
-              - dynamodb:PutItem
-              - dynamodb:UpdateItem
-              - dynamodb:Query
-              - dynamodb:Scan
-              - dynamodb:DeleteItem
-              Resource: !Sub "{{resolve:ssm:/scp/dynamodb-arn}}"
-        - PolicyName: allowS3
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - s3:Get*
-                - s3:List*
-              Resource:
-                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/cloudformation-s3-bucket-name}}'
-                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/cloudformation-s3-bucket-name}}/*'
-            - Effect: Allow
-              Action:
-                - s3:Get*
-                - s3:List*
-                - s3:PutBucketPolicy
-              Resource:
-                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}'
-                - !Sub 'arn:${AWS::Partition}:s3:::{{resolve:ssm:/scp/permission-boundary-s3-bucket-name}}/*'
-        - PolicyName: allowSns
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - sns:Publish
-              Resource: !Sub "{{resolve:ssm:/scp/sns-topic-arn}}"
-        - PolicyName: eventBus
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - events:DescribeEventBus
-                - events:PutPermission
-              Resource: !Sub '{{resolve:ssm:/scp/event-bus-arn}}'
-        - PolicyName: eventRule
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - events:DescribeRule
-                - events:PutRule
-              Resource: !Sub '{{resolve:ssm:/scp/event-rule-arn}}'
-        - PolicyName: allowAssumeRole
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - sts:AssumeRole
-              Resource: !Sub 'arn:${AWS::Partition}:iam::{{resolve:ssm:/scp/management-account-id}}:role/{{resolve:ssm:/scp/management-account-access-role}}'
-        - PolicyName: allowDecryptKMS
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-                - "kms:Decrypt"
-                - "kms:Encrypt"
-                - "kms:GenerateDataKey"
-              Resource: "*"
 
   TriggerLambda:
     Type: "Custom::TriggerLambda"
