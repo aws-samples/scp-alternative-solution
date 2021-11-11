@@ -774,6 +774,7 @@ Resources:
 
   ServiceCatalogLaunchConstraint:
     Type: "AWS::ServiceCatalog::LaunchRoleConstraint"
+    DependsOn: SCPAssociation
     Properties:
       Description: This is a launch constraint created for SCP portfolio
       AcceptLanguage: en
