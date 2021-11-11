@@ -20,6 +20,13 @@ Parameters:
     Type: String
     AllowedPattern: ".+"
     ConstraintDescription: "Enter the AWS Organization Unit ID of the Member Account"
+  CreateCloudTrail:
+    Description: "Create dedicated CloudTrail in the member account to capture the IAM events."
+    Type: String
+    AllowedValues:
+      - yes
+      - no
+    Default: yes
 
 Resources:
   SCPAccountRegister:
@@ -39,7 +46,7 @@ Resources:
           "MANAGEMENT_ACCOUNT_ID": "{{resolve:ssm:/scp/management-account-id}}"
           "ACCOUNT_ID": !Ref MemberAccountID
           "OU_ID": !Ref OrganizationUnitID
-          "CREATE_SCP_TRAIL": "yes"
+          "CREATE_SCP_TRAIL": !Ref CreateCloudTrail
           "DYNAMODB_TABLE_ARN": "{{resolve:ssm:/scp/dynamodb-arn}}"
           "SNS_TOPIC_ARN": "{{resolve:ssm:/scp/sns-topic-arn}}"
           "SCP_EVENT_BUS_ARN": "{{resolve:ssm:/scp/event-bus-arn}}"
@@ -155,6 +162,7 @@ Resources:
       ServiceToken: !GetAtt SCPAccountRegister.Arn
       MemberAccountID: !Ref MemberAccountID
       OrganizationUnitID: !Ref OrganizationUnitID
+      CreateCloudTrail: !Ref CreateCloudTrail
 Outputs:
   MemberAccountID:
     Description: The member account id.
