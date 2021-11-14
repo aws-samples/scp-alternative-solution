@@ -66,13 +66,29 @@ ACCOUNT_EVENT_PATTERN ={
   }
 }
 
+# The permission boundary won't be attached to the roles below
+# For backward compatibility
+if "WHITELIST_ROLE_NAME" in os.environ and os.environ["WHITELIST_ROLE_NAME"] != "None":
+  WHITELIST_ROLE_NAME = os.environ["WHITELIST_ROLE_NAME"]
+else:
+  WHITELIST_ROLE_NAME = ""
+
+WHITELIST_ROLE_NAME_LIST = WHITELIST_ROLE_NAME.split(",")
+ORGANIZATION_ROLE_LIST = ORGANIZATION_ROLE.split(",")
+IAM_ROLE_WHITELIST = list(filter(None, WHITELIST_ROLE_NAME_LIST + ORGANIZATION_ROLE_LIST))
+IAM_USER_WHITELIST = []
+
+IAM_ROLE_ARN_WHITELIST = list(map(lambda x: f"arn:aws-cn:iam::*:role/{x}", IAM_ROLE_WHITELIST))
+
 SCP_ENFORCE_POLICY = [
     {
         "Sid": "EnforceDeny1",
         "Effect": "Deny",
         "Action": [
             "iam:DeleteUserPermissionsBoundary",
-            "iam:DeleteRolePermissionsBoundary"
+            "iam:DeleteRolePermissionsBoundary",
+            "iam:PutRolePermissionsBoundary",
+            "iam:PutUserPermissionsBoundary"
         ],
         "Resource": "*",
         "Condition": {
@@ -102,10 +118,6 @@ SCP_ENFORCE_POLICY = [
 
 AWS_ARN_TEMPLATE = "arn:%(partition)s:iam::%(account_id)s:root"
 
-# The permission boundary won't be attached to the roles below
-IAM_ROLE_WHITELIST = [ORGANIZATION_ROLE]
-
-IAM_USER_WHITELIST = []
 
 ACCOUNT_EVENT_ROLE_POLICY = {
     "Version": "2012-10-17",
@@ -396,7 +408,13 @@ def get_available_roles(iam_client):
         role_name = role["RoleName"]
         # exclude the service linked role
         role_path_prefix = role["Path"].split("/")[1]
-        if ((role_name not in IAM_ROLE_WHITELIST) and (role_path_prefix != "aws-service-role")):
+        # Exclude the Whitelisted IAM Roles
+        if ((role_name not in IAM_ROLE_WHITELIST) \
+            # Exclude AWS Service Linked Role
+            and (role_path_prefix != "aws-service-role") \
+            # Exclude Organization Management Role.
+            and (role_name != "OrganizationAccountAccessRole")
+           ):
             ava_roles.append(role_name)
     return ava_roles
 

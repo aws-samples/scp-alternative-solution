@@ -37,20 +37,33 @@ BLAKE2B_DIGEST_SIZE = 2
 BLAKE2B_INPUT_ENCODING = "utf-8"
 HASH_PREFIX_NUM = 5
 
-# The permission boundary won't be attached to the roles below
-IAM_ROLE_WHITELIST = [ORGANIZATION_ROLE]
-IAM_USER_WHITELIST = []
-
 ACCOUNT_EVENT_RULE_NAME = "scp-event-rule"
 ACCOUNT_BUCKET_PREFIX = "scp-trail-bucket"
 ACCOUNT_TRAIL_NAME = "scp-trail"
+
+# The permission boundary won't be attached to the roles below
+# For backward compatibility
+if "WHITELIST_ROLE_NAME" in os.environ and os.environ["WHITELIST_ROLE_NAME"] != "None":
+  WHITELIST_ROLE_NAME = os.environ["WHITELIST_ROLE_NAME"]
+else:
+  WHITELIST_ROLE_NAME = ""
+
+WHITELIST_ROLE_NAME_LIST = WHITELIST_ROLE_NAME.split(",")
+ORGANIZATION_ROLE_LIST = ORGANIZATION_ROLE.split(",")
+IAM_ROLE_WHITELIST = list(filter(None, WHITELIST_ROLE_NAME_LIST + ORGANIZATION_ROLE_LIST))
+IAM_USER_WHITELIST = []
+
+IAM_ROLE_ARN_WHITELIST = list(map(lambda x: f"arn:aws-cn:iam::*:role/{x}", IAM_ROLE_WHITELIST))
+
 SCP_ENFORCE_POLICY = [
     {
         "Sid": "EnforceDeny1",
         "Effect": "Deny",
         "Action": [
             "iam:DeleteUserPermissionsBoundary",
-            "iam:DeleteRolePermissionsBoundary"
+            "iam:DeleteRolePermissionsBoundary",
+            "iam:PutRolePermissionsBoundary",
+            "iam:PutUserPermissionsBoundary"
         ],
         "Resource": "*",
         "Condition": {
@@ -242,7 +255,13 @@ def is_valid_role(iam_client, role_name):
     # exclude the service role
     role_path_prefix = response["Role"]["Path"].split("/")[1]
 
-    if ((role_name not in IAM_ROLE_WHITELIST) and (role_path_prefix != "aws-service-role")):
+    # Exclude the Whitelisted IAM Roles
+    if ((role_name not in IAM_ROLE_WHITELIST) \
+        # Exclude AWS Service Linked Role
+        and (role_path_prefix != "aws-service-role") \
+        # Exclude Organization Management Role.
+        and (role_name != "OrganizationAccountAccessRole")
+       ):
         return True
     else:
         print("Role {0} is either in whitelist or service linked role"

@@ -11,7 +11,6 @@ Metadata:
       - Label:
           default: Mandatory Variables
         Parameters:
-          - SCPCatalogAdministrator
           - OrganizationAccessRoleName
           - ManagementAccountAccessRoleName
           - ManagementAccountID
@@ -19,13 +18,10 @@ Metadata:
           default: Optional Variables
         Parameters:
           - Email
-          - SCPPortfolioName
-          - SourceTemplate
-          - SCPPortfolioName
-          - SCPProductName
-          - SCPProductDescription
+          - WhitelistRoleName
 Conditions:
   DisableEmailSub: !Equals  [!Ref Email,'']
+  ExistsWhitelistRoleName: !Not [!Equals  [!Ref WhitelistRoleName,'']]
 Parameters:
   Prefix:
     Type: String
@@ -40,6 +36,11 @@ Parameters:
       Enter the AWS Organization Access Role Name used to assume to member accounts.
       The role name needs to be matched with the value in 010 cloudformation template.
     Default: OrganizationAccountAccessRole
+  WhitelistRoleName:
+    Type: String
+    Description: >
+      The IAM role name list which won't attach the IAM permission boundary policy for SCP. `OrganizationAccessRoleName` is in the list by default. Seperated by comma.
+    Default: ''
   ManagementAccountAccessRoleName:
     Type: String
     Default: scp-cross-account-access-role-for-lambda
@@ -49,37 +50,8 @@ Parameters:
   ManagementAccountID:
     Type: String
     Description: The management Account ID of the organization.
-    AllowedPattern: "^[0-9]{12}$"
-  SourceTemplate:
-    Type: String
-    Description: >
-      Enter the CloudFormation template path stored in S3 bucket in Security Account.
-      The template is used for the SCP Service Catalog.
-    Type: String
-    Default: scp-service-catalog-product-template.yaml
-  SCPCatalogAdministrator:
-    Type: String
-    Description: >
-      Enter the ARN Suffix of the IAM entity (role or user or group) that will be
-      performing SCP account register from AWS Service Catalog
-      E.g: role/Admin, user/abc
-    Type: String
-    Default: role/Admin
-    AllowedPattern: ".+"
-  SCPPortfolioName:
-    Type: String
-    Description: "Enter the name for SCP Acount Register Portfolio."
-    Type: String
-    Default: "SCP Account Register Portfolio."
-  SCPProductName:
-    Type: String
-    Description: "Enter the name for SCP Account Register Product."
-    Default: "SCP Account Register Product."
-  SCPProductDescription:
-    Description: "Enter the description for SCP Account Register Product."
-    Type: String
-    Default: "This product to register new account to apply SCP Policy in the SCP Alternative Solution."
-
+    AllowedPattern: (\d{12}|^$)
+    ConstraintDescription: Must be a valid AWS account ID.
 Resources:
   # system metadata to parameter store
   SSMManagementAccountID:
@@ -122,6 +94,20 @@ Resources:
       Tags:
         Owner: !Sub '${AWS::StackName}'
         Application: SCP
+  SCPWhitelistRoleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/whitelist-role-name-list
+      Type: String
+      Value:
+        !If
+          - ExistsWhitelistRoleName
+          - !Ref WhitelistRoleName
+          - "None"
+      Description: The IAM Whitelist Role name.
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
   SCPReadPolicyStatementID:
     Type: AWS::SSM::Parameter
     Properties:
@@ -139,6 +125,16 @@ Resources:
       Type: String
       Value: !GetAtt ScpTable.Arn
       Description: The Dynamodb Table Arn for SCP in security account
+      Tags:
+        Owner: !Sub '${AWS::StackName}'
+        Application: SCP
+  sScpAccountRegisterRoleArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /scp/scp-account-register-role-arn
+      Type: String
+      Value: !GetAtt ScpAccountRegisterRole.Arn
+      Description: The IAM role arn for SCP Account Register Lambda.
       Tags:
         Owner: !Sub '${AWS::StackName}'
         Application: SCP
@@ -167,7 +163,7 @@ Resources:
     Properties:
       Name: /scp/event-rule-arn
       Type: String
-      Value: !GetAtt SCPIamEventDispatcherEventBridgeSQSRule.Arn
+      Value: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${SCPIamEventDispatcherEventBridge}/scp-alt-event-rule
       Description: The Event rule for SCP in security account
       Tags:
         Owner: !Sub '${AWS::StackName}'
@@ -258,7 +254,7 @@ Resources:
     DependsOn: SCPS3EventDispatcherSQSQueuePolicy
     Type: 'AWS::S3::Bucket'
     Properties:
-      BucketName: !Sub '${Prefix}-${AWS::AccountId}'
+      BucketName: !Sub '${Prefix}-policy-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
         BlockPublicAcls: yes
         BlockPublicPolicy: yes
@@ -334,49 +330,14 @@ Resources:
             Condition:
               ArnLike:
                 # Static BucketName used to avoid circular dependency with S3 bucket
-                aws:SourceArn: !Sub 'arn:${AWS::Partition}:s3:::${Prefix}-${AWS::AccountId}'
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:s3:::${Prefix}-policy-${AWS::AccountId}'
       Queues:
         - !Ref SCPS3EventDispatcherSQS
-  ScpS3LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-        - Action:
-          - sts:AssumeRole
-          Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-        Version: '2012-10-17'
-      Path: "/"
-      Policies:
-      - PolicyDocument:
-          Statement:
-          - Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-            Effect: Allow
-            Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
-          Version: '2012-10-17'
-        PolicyName: !Sub '${AWS::StackName}-${AWS::Region}-AWSLambda-CW'
-      - PolicyDocument:
-          Statement:
-          - Action:
-            - s3:PutObject
-            - s3:List*
-            Effect: Allow
-            Resource:
-            - !Sub arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*
-            - !Sub arn:${AWS::Partition}:s3:::${ScpS3Bucket}
-          Version: '2012-10-17'
-        PolicyName: !Sub ${AWS::StackName}-${AWS::Region}-AWSLambda-S3
-      RoleName: !Sub ${AWS::StackName}-${AWS::Region}-AWSLambdaExecutionRole
   # Lambda scp-s3-event-dispatcher
   SCPS3EventDispatcherLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: scp-s3-event-dispatcher-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -488,6 +449,7 @@ Resources:
           "DYNAMODB_TABLE_ARN": !GetAtt ScpTable.Arn
           "SNS_TOPIC_ARN": !Ref SNSTopic
           "ORGANIZATION_ROLE": !Ref OrganizationAccessRoleName
+          "WHITELIST_ROLE_NAME": !GetAtt SCPWhitelistRoleName.Value
           "PERMISSION_BOUNDARY_NAME": !GetAtt SCPPermissionBoundaryName.Value
           "MANAGEMENT_ACCOUNT_ID": !Ref ManagementAccountID
           "MANAGEMENT_ACCOUNT_ACCESS_ROLE": !Ref ManagementAccountAccessRoleName
@@ -503,25 +465,130 @@ Resources:
     Type: AWS::Events::EventBus
     Properties:
       Name: !Sub '${Prefix}-event-bus'
-  SCPIamEventDispatcherEventBridgeSQSRule:
-    Type: AWS::Events::Rule
+  # The event pattern for the policy  will be updated accordingly once the account is registered.
+  # To avoid the potential drifts, the lambda function is used instead to manage
+  # the event rule.
+  rSCPEventRuleLambdaCustomResource:
+    Type: Custom::CreateEventRule
     Properties:
-       Description: "Capture IAM events from other accounts for SCP"
-       Name: !Sub '${Prefix}-event-rule'
-       EventBusName: !Ref SCPIamEventDispatcherEventBridge
-       EventPattern:
-         source:
-           - aws.iam
-         detail-type:
-           - AWS API Call via CloudTrail
-       State: ENABLED
-       Targets:
-         - Arn: !GetAtt SCPIamEventDispatcherSQS.Arn
-           Id: "SCPIamEventDispatcherSQSQueue"
+      ServiceToken: !GetAtt SCPIamEventRuleLambda.Arn
+      EventBusArn: !GetAtt SCPEventBusArn.Value
+      SqsArn: !GetAtt SCPIamEventDispatcherSQS.Arn
+  SCPIamEventRuleLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile:
+          !Sub |
+            # Import statements
+            import os
+            import boto3
+            import cfnresponse
+            import json
+            from botocore.exceptions import ClientError
+
+            def lambda_handler(event, context):
+
+                print(event)
+
+                props = event['ResourceProperties']
+
+                scp_event_rule_arn = os.environ["SCP_EVENT_RULE_ARN"]
+                scp_event_bus_arn = props["EventBusArn"]
+                scp_sqs_arn = props["SqsArn"]
+
+                EVENT_PATTERN = {
+                    "detail-type": ["AWS API Call via CloudTrail"],
+                    "source": ["aws.iam"]
+                }
+
+                scp_event_rule_name = scp_event_rule_arn.split("/")[-1]
+                scp_event_bus_name = scp_event_bus_arn.split("/")[-1]
+                events_client = boto3.client('events')
+
+                if (event['RequestType'] == 'Create'):
+                    try:
+                        events_client.put_rule(
+                            Name=scp_event_rule_name,
+                            EventPattern=json.dumps(EVENT_PATTERN),
+                            State='ENABLED',
+                            Description=f'Event rule for SCP Alternative Solution to capture IAM events from member accounts',
+                            EventBusName=scp_event_bus_name
+                        )
+
+                        events_client.put_targets(
+                            Rule=scp_event_rule_name,
+                            EventBusName=scp_event_bus_name,
+                            Targets=[
+                                {
+                                    'Id': scp_event_rule_name,
+                                    'Arn': scp_sqs_arn
+                                },
+                            ]
+                      )
+                    except ClientError as ex:
+                        print(ex.response['Error']['Message'])
+                        cfnresponse.send(event, context, cfnresponse.FAILED, ex.response)
+                        sys.exit(1)
+                if(event['RequestType'] == 'Update'):
+                    print("Update event, skiping...")
+                elif(event['RequestType'] == 'Delete'):
+                    try:
+                        events_client.remove_targets(
+                            Rule=scp_event_rule_name,
+                            EventBusName=scp_event_bus_name,
+                            Ids=[scp_event_rule_name],
+                            Force=True
+                        )
+                        events_client.delete_rule(
+                            Name=scp_event_rule_name,
+                            EventBusName=scp_event_bus_name,
+                            Force=True
+                        )
+                    except ClientError as ex:
+                        print(ex.response['Error']['Message'])
+                        cfnresponse.send(event, context, cfnresponse.FAILED, ex.response)
+                        sys.exit(1)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Handler: 'index.lambda_handler'
+      MemorySize: 128
+      Role: !GetAtt 'rSCPIamEventRuleLambdaRole.Arn'
+      Runtime: 'python3.7'
+      Timeout: 60
+      Environment:
+        Variables:
+          "SCP_EVENT_RULE_ARN": !GetAtt SCPEventRuleArn.Value
+  rSCPIamEventRuleLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: allowPutRule
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - events:PutRule
+              - events:PutTargets
+              - events:RemoveTargets
+              - events:DeleteRule
+            Resource: !GetAtt SCPEventRuleArn.Value
+
   # Lambda scp-iam-event-dispatcher
   SCPIamEventDispatcherLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: scp-iam-event-dispatcher-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -635,6 +702,7 @@ Resources:
           "SNS_TOPIC_ARN": !Ref SNSTopic
           "S3_BUCKET_NAME": !Ref ScpS3Bucket
           "ORGANIZATION_ROLE": !Ref OrganizationAccessRoleName
+          "WHITELIST_ROLE_NAME": !GetAtt SCPWhitelistRoleName.Value
           "S3_OBJECT_FOLDER": !GetAtt SCPS3ObjectFolder.Value
           "PERMISSION_BOUNDARY_NAME": !GetAtt SCPPermissionBoundaryName.Value
           "MANAGEMENT_ACCOUNT_ID": !Ref ManagementAccountID
@@ -680,8 +748,7 @@ Resources:
             Resource: !GetAtt SCPIamEventDispatcherSQS.Arn
             Condition:
               ArnEquals:
-                # Static BucketName used to avoid circular dependency with S3 bucket
-                aws:SourceArn: !GetAtt SCPIamEventDispatcherEventBridgeSQSRule.Arn
+                aws:SourceArn: !GetAtt SCPEventRuleArn.Value
       Queues:
         - !Ref SCPIamEventDispatcherSQS
 
@@ -714,88 +781,130 @@ Resources:
                 Ref: Email
               Protocol: email
 
-  # SCP Service Catalog
-  SCPPortfolio:
-    Type: "AWS::ServiceCatalog::Portfolio"
-    Properties:
-      DisplayName: !Ref SCPPortfolioName
-      AcceptLanguage: "en"
-      ProviderName: "security"
-
-  SCPProduct:
-    Type: "AWS::ServiceCatalog::CloudFormationProduct"
-    Properties:
-      AcceptLanguage: "en"
-      Description: !Ref SCPProductDescription
-      Distributor: "Security Team"
-      Name: !Ref SCPProductName
-      Owner: "Security Team"
-      SupportEmail: "scp@security.com"
-      SupportUrl: "https://www.security.com"
-      SupportDescription: "Security team"
-      ProvisioningArtifactParameters:
-      -
-        Description: "Aug 2021"
-        Name: "Aug 2021 v1.0"
-        Info:
-          LoadTemplateFromURL: !Sub
-            - 'https://s3.${Region}.amazonaws.com.cn/${BucketName}/${TemplatePath}'
-            - Region: !Ref AWS::Region
-              BucketName: !ImportValue CloudFormationBucketName
-              TemplatePath: !Ref SourceTemplate
-  SCPAssociation:
-    Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
-    Properties:
-      ProductId: !Ref SCPProduct
-      PortfolioId: !Ref SCPPortfolio
-
-  PortfolioPrincipalAssociation:
-    Type: "AWS::ServiceCatalog::PortfolioPrincipalAssociation"
-    Properties:
-      PrincipalARN: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:${SCPCatalogAdministrator}"
-      PortfolioId: !Ref SCPPortfolio
-      PrincipalType: IAM
-
-  ServiceCatalogLaunchRole:
+  ScpAccountRegisterRole:
     Type: "AWS::IAM::Role"
     Properties:
+      RoleName: scp-account-register-role
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
-            Effect: "Allow"
-            Principal:
-              Service:
-                - "servicecatalog.amazonaws.com"
-            Action:
-              - "sts:AssumeRole"
-      ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess"
+          Effect: "Allow"
+          Principal:
+            Service:
+              - "lambda.amazonaws.com"
+          Action:
+            - "sts:AssumeRole"
       Path: "/"
-
-  ServiceCatalogLaunchConstraint:
-    Type: "AWS::ServiceCatalog::LaunchRoleConstraint"
-    DependsOn: SCPAssociation
-    Properties:
-      Description: This is a launch constraint created for SCP portfolio
-      AcceptLanguage: en
-      PortfolioId: !Ref SCPPortfolio
-      ProductId: !Ref SCPProduct
-      RoleArn: !GetAtt ServiceCatalogLaunchRole.Arn
-
-  ServiceCatalogTagOption:
-    Type: "AWS::ServiceCatalog::TagOption"
-    Properties:
-      Active: true
-      Value: !Sub "scp-${AWS::StackName}"
-      Key: "Name"
-
-  ServiceCatalogTagOptionAssociation:
-    Type: "AWS::ServiceCatalog::TagOptionAssociation"
-    Properties:
-      TagOptionId: !Ref ServiceCatalogTagOption
-      ResourceId: !Ref SCPPortfolio
-
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: !Sub 'arn:${AWS::Partition}:logs:*:*:*'
+        - PolicyName: allowDynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:DeleteItem
+              Resource: !GetAtt ScpTable.Arn
+        - PolicyName: allowS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+              Resource:
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+                - !Sub
+                  - 'arn:${Partition}:s3:::${ImportBucketName}/*'
+                  - Partition: !Ref AWS::Partition
+                    ImportBucketName: !ImportValue CloudFormationBucketName
+            - Effect: Allow
+              Action:
+                - s3:Get*
+                - s3:List*
+                - s3:PutBucketPolicy
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}'
+                - !Sub 'arn:${AWS::Partition}:s3:::${ScpS3Bucket}/*'
+        - PolicyName: allowSns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref SNSTopic
+        - PolicyName: eventBus
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - events:DescribeEventBus
+                - events:PutPermission
+              Resource: !GetAtt SCPIamEventDispatcherEventBridge.Arn
+        - PolicyName: eventRule
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - events:DescribeRule
+                - events:PutRule
+              Resource: !GetAtt SCPEventRuleArn.Value
+        - PolicyName: allowAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: !Sub 'arn:${AWS::Partition}:iam::${ManagementAccountID}:role/${ManagementAccountAccessRoleName}'
+        - PolicyName: allowDecryptKMS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Decrypt"
+                - "kms:Encrypt"
+                - "kms:GenerateDataKey"
+              Resource: "*"
 Outputs:
   ScpS3Bucket:
     Description: The bucket name for SCP polily files.
     Value: !Ref ScpS3Bucket
+  rWhitelistRoleName:
+    Description: The Whitelist Role name for SCP.
+    Value: !Ref WhitelistRoleName
+  rScpAccountRegisterRoleArn:
+    Description: The IAM role arn for SCP Account Register Lambda.
+    Value: !GetAtt ScpAccountRegisterRole.Arn
+    Export:
+      Name: scp-account-register-role-arn
+  rSCPS3EventDispatcherLambdaExecutionRoleArn:
+    Description: The IAM role arn for SCP S3 Event Dispatcher Lambda.
+    Value: !GetAtt SCPS3EventDispatcherLambdaExecutionRole.Arn
+    Export:
+      Name: scp-s3-event-dispatcher-role-arn
+  rSCPIamEventDispatcherLambdaExecutionRoleArn:
+    Description: The IAM role arn for IAM Event Dispatcher Lambda.
+    Value: !GetAtt SCPIamEventDispatcherLambdaExecutionRole.Arn
+    Export:
+      Name: scp-iam-event-dispatcher-role-arn

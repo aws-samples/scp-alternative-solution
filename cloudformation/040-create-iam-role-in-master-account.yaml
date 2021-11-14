@@ -6,7 +6,8 @@ Parameters:
   SecurityAccountID:
     Type: String
     Description: Enter the Security Account ID
-    AllowedPattern: "^[0-9]{12}$"
+    AllowedPattern: (\d{12}|^$)
+    ConstraintDescription: Must be a valid AWS account ID.
   ManagementAccountAccessRoleName:
     Type: String
     Default: scp-cross-account-access-role-for-lambda
@@ -26,7 +27,9 @@ Resources:
               Effect: "Allow"
               Principal:
                 AWS:
-                  - !Ref SecurityAccountID
+                  - !Sub arn:${AWS::Partition}:iam::${SecurityAccountID}:role/scp-iam-event-dispatcher-role
+                  - !Sub arn:${AWS::Partition}:iam::${SecurityAccountID}:role/scp-s3-event-dispatcher-role
+                  - !Sub arn:${AWS::Partition}:iam::${SecurityAccountID}:role/scp-account-register-role
               Action:
                 - sts:AssumeRole
         Path: "/"
