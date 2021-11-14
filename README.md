@@ -10,7 +10,7 @@ This repository is part of [the Chinese blog post](https://aws.amazon.com/cn/blo
 
 Please refer to branch `release-1.0` for the code snippest used in [the Chinese blog post](https://aws.amazon.com/cn/blogs/china/scp-alternative-based-on-iam-permission-boundaries/).
 
-For any new deployments, please refer to `master` branch.
+For any new deployments, please refer to `main` branch.
 
 Please read the [Limitation](#limitation) about the solution before deploying to your production environment.
 
