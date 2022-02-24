@@ -17,14 +17,12 @@ Metadata:
           - SCPProductDescription
 Parameters:
   SourceTemplate:
-    Type: String
     Description: >
       Enter the CloudFormation template path stored in S3 bucket in Security Account.
       The template is used for the SCP Service Catalog.
     Type: String
     Default: scp-service-catalog-product-template.yaml
   SCPCatalogAdministrator:
-    Type: String
     Description: >
       Enter the ARN Suffix of the IAM entity (role or user or group) that will be
       performing SCP account register from AWS Service Catalog
@@ -33,7 +31,6 @@ Parameters:
     Default: role/Admin
     AllowedPattern: ".+"
   SCPPortfolioName:
-    Type: String
     Description: "Enter the name for SCP Acount Register Portfolio."
     Type: String
     Default: "SCP Account Register Portfolio."
