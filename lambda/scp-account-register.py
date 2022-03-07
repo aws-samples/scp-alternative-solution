@@ -398,44 +398,48 @@ def get_available_roles(iam_client):
     Get the valid roles from the current account, exclude the service linked
     role and the whitested roles.
     """
-    ava_roles = []
     try:
-        response = iam_client.list_roles()
+        paginator = iam_client.get_paginator("list_roles")
+        for response in paginator.paginate():
+            for role in response["Roles"]:
+                role_name = role["RoleName"]
+                # exclude the service linked role
+                role_path_prefix = role["Path"].split("/")[1]
+                # Exclude the Whitelisted IAM Roles
+                if ((role_name not in IAM_ROLE_WHITELIST) \
+                    # Exclude AWS Service Linked Role
+                    and (role_path_prefix != "aws-service-role") \
+                    # Exclude Organization Management Role.
+                    and (role_name != "OrganizationAccountAccessRole")
+                   ):
+
+                    yield role_name
+            # available_roles.extend([r["RoleName"] for r in response["Roles"]])
+        # response = rte["target_iam_client"].list_roles()
     except Exception as e:
         msg = "Failed to list roles in the account {0}".format(e)
         failure_notify(msg)
-    for role in response["Roles"]:
-        role_name = role["RoleName"]
-        # exclude the service linked role
-        role_path_prefix = role["Path"].split("/")[1]
-        # Exclude the Whitelisted IAM Roles
-        if ((role_name not in IAM_ROLE_WHITELIST) \
-            # Exclude AWS Service Linked Role
-            and (role_path_prefix != "aws-service-role") \
-            # Exclude Organization Management Role.
-            and (role_name != "OrganizationAccountAccessRole")
-           ):
-            ava_roles.append(role_name)
-    return ava_roles
+    # return available_roles
 
 def get_available_users(iam_client):
     """
     Get the valid users from the current account, exclude the whitested users.
     """
-    ava_users = []
     try:
-        response = iam_client.list_users()
+        paginator = iam_client.get_paginator("list_users")
+        for response in paginator.paginate():
+            for user in response["Users"]:
+                user_name = user["UserName"]
+                user_path_prefix = user["Path"].split("/")[1]
+                if ((user_name not in IAM_USER_WHITELIST) and (user_path_prefix != "aws-service-user")):
+                   yield user_name
+            # available_users.extend([u["UserName"] for u in response["Users"]])
+        # response = rte["target_iam_client"].list_users()
     except Exception as e:
         msg = "Failed to list users in the account {0}".format(e)
         failure_notify(msg)
-    for user in response["Users"]:
-        user_name = user["UserName"]
-        # exclude the service user
-        user_path_prefix = user["Path"].split("/")[1]
-        if ((user_name not in IAM_USER_WHITELIST) and (user_path_prefix != "aws-service-user")):
-            ava_users.append(user_name)
 
-    return ava_users
+    # return available_users
 
 def bind_permission_boundary_role(iam_client, role_name, permission_boundary_arn):
     """
@@ -997,8 +1001,7 @@ def create_event_rule_in_account(target_account_id, context):
             failure_notify(msg)
 
     role_exists = False
-    roles_response = target_iam_client.list_roles()
-    role_list = roles_response['Roles']
+    role_list = get_available_roles(iam_client)
     for key in role_list:
         if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
             print("IAM role {0} was created in account {1}, skipping..."
@@ -1116,8 +1119,7 @@ def delete_event_rule_in_account(target_account_id, context):
 
     # Detach policy from role
     role_exists = False
-    roles_response = target_iam_client.list_roles()
-    role_list = roles_response['Roles']
+    role_list = get_available_roles(iam_client)
     for key in role_list:
         if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
             print("IAM role {0} was created in account {1}, deleting..."
