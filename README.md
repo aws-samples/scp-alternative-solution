@@ -261,6 +261,7 @@ This is a SCP workaround solution by using AWS IAM's permission boundary, the us
    - The CloudFormation StackSets execution role `stacksets-exec-xxxxx` is whitelisted since it's used for CloudFormation StackSets.
 1. Since the solution is based on IAM Permission Boundary, the allow actions are needed in the SCP policy files to have effective permissions. Details please see [Evaluating effective permissions with boundaries](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html#access_policies_boundaries-eval-logic).
    > In most of the cases, the allow all actions should be given as defined in [the example policy](https://github.com/aws-samples/scp-alternative-solution/blob/main/sample-scp-policies/010-region-beijing-only.json#L4-L9).
+1. Cloudwatch Event rules for `iam:CreateRole` and `iam:CreateUser` must be deployed in `Beijing` (`cn-north-1`) AWS Region as all of the IAM event are available only in this region. These rules are created by Lambda during the Service Catalog Product provisioning for target account and `REGION` value is set to `cn-north-1` in source code.
 
 ## Recommendation
 
