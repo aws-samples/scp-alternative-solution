@@ -1001,9 +1001,9 @@ def create_event_rule_in_account(target_account_id, context):
             failure_notify(msg)
 
     role_exists = False
-    role_list = get_available_roles(iam_client)
+    role_list = get_available_roles(target_iam_client)
     for key in role_list:
-        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+        if key == ACCOUNT_EVENT_RULE_NAME:
             print("IAM role {0} was created in account {1}, skipping..."
               .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
             role_exists = True
@@ -1119,9 +1119,9 @@ def delete_event_rule_in_account(target_account_id, context):
 
     # Detach policy from role
     role_exists = False
-    role_list = get_available_roles(iam_client)
+    role_list = get_available_roles(target_iam_client)
     for key in role_list:
-        if key["RoleName"] == ACCOUNT_EVENT_RULE_NAME:
+        if key == ACCOUNT_EVENT_RULE_NAME:
             print("IAM role {0} was created in account {1}, deleting..."
               .format(ACCOUNT_EVENT_RULE_NAME, target_account_id))
             role_exists = True
