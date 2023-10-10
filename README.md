@@ -1,3 +1,5 @@
+> Archived this solution due to [AWS Organizations now supports service control policies (SCPs) in AWS China Regions](https://aws.amazon.com/about-aws/whats-new/2023/10/aws-organizations-service-control-policies-scps-aws-china-regions/)
+
 # SCP Alternative Solution For China Region
 
 AWS Organizations provides central governance and management for multiple accounts. Central security administrators use [service control policies (SCPs)](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html) with AWS Organizations to establish controls that all IAM principals (users and roles) adhere to.
